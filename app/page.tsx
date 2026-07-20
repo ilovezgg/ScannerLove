@@ -51,39 +51,26 @@ export default function Page(){
     })
   },[])
 
- const buy = async (stars: number, feature: "deep"|"sex"|"kids") => {
+const buy = async (stars: number, feature: "deep"|"sex"|"kids") => {
+  const tg = (window as any)?.Telegram?.WebApp
+  if(!tg){ alert("Открой через бота: Menu"); return }
+  tg.ready()
+  const userId = tg?.initDataUnsafe?.user?.id
+  if(!userId) return
+
   try{
-    const tg = (window as any)?.Telegram?.WebApp
-    if(!tg){ alert("Открой через бота: зайди в бот -> Menu -> Love Scanner"); return }
-    tg.ready()
-    const userId = tg?.initDataUnsafe?.user?.id
-    if(!userId){ alert("Нет userId, перезапусти бота"); return }
-
-    alert(`Создаю счет на ${stars} stars...`) // увидим что клик сработал
-
     const r = await fetch("/api/stars/create",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({stars, feature, userId})})
     const j = await r.json()
-    console.log('invoice resp', j)
-    if(!r.ok){ alert("Ошибка: "+ (j.error || "create failed")); return }
-    const invoiceLink = j.invoiceLink
-    if(!invoiceLink){ alert("Нет ссылки на оплату"); return }
-
-    const onPaid = () => {
-      alert("Оплачено!")
-      if(feature==="deep") setDeepUnlocked(true)
-      if(feature==="sex") setSexUnlocked(true)
-      if(feature==="kids"){ setKidsUnlocked(true); genKids() }
-    }
-
-    if(tg.isVersionAtLeast?.("6.1") && tg.openInvoice){
-      tg.openInvoice(invoiceLink, (s: string)=>{ console.log('invoice status', s); if(s==="paid") onPaid() })
-    } else {
-      window.open(invoiceLink, "_blank")
-    }
-  }catch(e:any){
-    alert("BUY FAIL: "+ e.message)
-    console.error(e)
-  }
+    if(!j.invoiceLink){ alert("Ошибка оплаты: "+(j.error||"no link")); return }
+    
+    tg.openInvoice(j.invoiceLink, (s: string)=>{ 
+      if(s==="paid"){
+        if(feature==="deep") setDeepUnlocked(true)
+        if(feature==="sex") setSexUnlocked(true)
+        if(feature==="kids"){ setKidsUnlocked(true); genKids() }
+      }
+    })
+  }catch(e:any){ alert(e.message) }
 }
 
   const check = async () => {
