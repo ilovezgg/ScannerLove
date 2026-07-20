@@ -1,10 +1,5 @@
 import { Redis } from "@upstash/redis"
-import { NextRequest } from "next/server"
-
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
-})
+const redis = Redis.fromEnv()
 
 const BOT_TOKEN = process.env.BOT_TOKEN!
 
