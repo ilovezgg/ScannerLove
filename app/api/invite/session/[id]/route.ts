@@ -5,9 +5,9 @@ const redis = Redis.fromEnv()
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const sessionId = params.id
+  const { id: sessionId } = await params
 
   const raw = await redis.get<string | object>(`invite:${sessionId}`)
   if (!raw) {
