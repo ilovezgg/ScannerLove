@@ -292,7 +292,7 @@ export default function Page(){
 
       ctx.fillStyle = "rgba(255,255,255,0.35)"
       ctx.font = "26px 'JetBrains Mono', monospace"
-      ctx.fillText("узнай свою совместимость → @love_scanner_bot", 540, 1260)
+      ctx.fillText("узнай свою совместимость → @lovescan_ai_bot", 540, 1260)
 
       canvas.toBlob(async (blob)=>{
         if(!blob){ setSharing(false); return }

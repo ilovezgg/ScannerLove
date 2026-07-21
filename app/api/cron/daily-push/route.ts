@@ -38,7 +38,7 @@ export async function GET(req: NextRequest){
           text: `🕯 Письмо дня\n\n«${letter.title}»\n${letter.text}\n\nОткрой печать, чтобы узнать, что сегодня между вами.`,
           reply_markup: {
             inline_keyboard: [[
-              { text: "Открыть письмо ↗", url: botUsername ? `https://t.me/${botUsername}/app` : undefined },
+              { text: "Открыть письмо ↗", url: botUsername ? `https://t.me/${botUsername}/love` : undefined },
             ]],
           },
         }),

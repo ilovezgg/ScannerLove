@@ -270,7 +270,7 @@ export function InviteFriendsButton({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
   const userId = getTelegramUserId()
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-  const link = userId && botUsername ? `https://t.me/${botUsername}/app?startapp=ref_${userId}` : null
+  const link = userId && botUsername ? `https://t.me/${botUsername}/love?startapp=ref_${userId}` : null
 
   const share = async () => {
     if (!link) return
