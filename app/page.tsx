@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
-import { InviteBanner, InvitePartnerButton, ComparisonScreen } from "./components/InviteFlow"
+import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 
 async function compress(f: File){
   const b=await createImageBitmap(f);let w=b.width,h=b.height,M=1000
@@ -37,22 +37,26 @@ const LETTERS = [
   { name:"Звезда", title:"Надежда", text:"Кто-то из вас влюбился сильнее и боится спугнуть." },
 ]
 
-// price anchoring — "was" prices shown struck-through next to the real ones
+type Mode = "couple" | "crush" | "friend"
+const MODES: { id: Mode, label: string, sub: string }[] = [
+  { id:"couple", label:"Пара",  sub:"уже вместе" },
+  { id:"crush",  label:"Краш",  sub:"ещё не пара" },
+  { id:"friend", label:"Друг",  sub:"без романтики" },
+]
+
 const PRICES = {
   deep:   { now: 27, was: 42 },
-  sex:    { now: 20, was: 32 },
+  hidden: { now: 20, was: 32 },
   future: { now: 40, was: 65 },
   bundle: { now: 49, was: 42+32+65 },
 }
 
-// DECOY teasers — these are fixed, fake filler paragraphs. They are NOT derived
-// from the real report text. Their only job is to visually suggest "there's more
-// juicy content behind the blur" without ever putting real spoiler content in the
-// page's HTML — so opening devtools and stripping the blur filter reveals nothing
-// real, just generic filler.
+// DECOY teasers — fixed, fake filler paragraphs, NOT derived from the real
+// report. Only job: suggest "more juicy content behind the blur" without ever
+// putting real spoiler content in the page's HTML.
 const DECOY_TEASERS = {
   deep: "...по позе видно то, что обычно не признают вслух, а ещё есть момент с выражением лица, который меняет всю трактовку — и то, что происходит между строк, объясняет гораздо больше, чем кажется на первый взгляд, если приглядеться к деталям на заднем плане и к тому, как расположены...",
-  sex: "...то, как расположены руки, обычно выдаёт больше, чем кажется, а на втором фото есть деталь, которая полностью меняет расклад — и это ровно то, что не видно с первого взгляда, пока не разложить по полочкам, кто на самом деле...",
+  hidden: "...то, как расположены руки и куда направлен взгляд на втором фото, обычно выдаёт больше, чем хотелось бы — там есть деталь, которая полностью меняет расклад, и это ровно то, что не видно с первого взгляда, пока не разложить по полочкам, что на самом деле...",
   future: "...если смотреть на это трезво, а не сквозь розовые очки, то ключевой момент прячется совсем не там, где его обычно ищут — и один нюанс на фото говорит о том, что решится всё гораздо раньше, чем...",
 }
 
@@ -74,26 +78,37 @@ function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, 
 
 export default function Page(){
   const [p1,setP1]=useState("");const [p2,setP2]=useState("")
+  const [mode,setMode]=useState<Mode>("couple")
   const [load,setLoad]=useState(false)
   const [res,setRes]=useState<{percent:number, full:string}|null>(null)
   const [sealBroken,setSealBroken]=useState(false)
   const [daily,setDaily]=useState(LETTERS[0])
   const [sharing,setSharing]=useState(false)
 
-  // sessionId приглашения — заполняется InviteBanner-ом, если человек
-  // открыл мини-апп по ссылке вида ?startapp=invite_XXXX
+  const [myUserId,setMyUserId]=useState<string|null>(null)
+  const [notifyOn,setNotifyOn]=useState(true)
   const [inviteSessionId,setInviteSessionId]=useState<string|null>(null)
+  const [referrerId,setReferrerId]=useState<string|null>(null) // from ?startapp=ref_<id>
+  const [refCredited,setRefCredited]=useState(false) // guards against double /invite/complete calls
+
+  const [refCount,setRefCount]=useState(0)
+  const [refCredits,setRefCredits]=useState(0)
+  const [refToNext,setRefToNext]=useState(3)
+
+  const [historyOpen,setHistoryOpen]=useState(false)
+  const [historyItems,setHistoryItems]=useState<any[]>([])
+  const [historyLoading,setHistoryLoading]=useState(false)
 
   const [deepUnlocked,setDeepUnlocked]=useState(false)
   const [deepLoad,setDeepLoad]=useState(false)
   const [deepRes,setDeepRes]=useState("")
   const [deepExtra,setDeepExtra]=useState("")
-  const [deepOpened,setDeepOpened]=useState(false) // envelope-reveal state
+  const [deepOpened,setDeepOpened]=useState(false)
 
-  const [sexUnlocked,setSexUnlocked]=useState(false)
-  const [sexLoad,setSexLoad]=useState(false)
-  const [sexRes,setSexRes]=useState("")
-  const [sexOpened,setSexOpened]=useState(false)
+  const [hiddenUnlocked,setHiddenUnlocked]=useState(false)
+  const [hiddenLoad,setHiddenLoad]=useState(false)
+  const [hiddenRes,setHiddenRes]=useState("")
+  const [hiddenOpened,setHiddenOpened]=useState(false)
 
   const [futureUnlocked,setFutureUnlocked]=useState(false)
   const [futureLoad,setFutureLoad]=useState(false)
@@ -105,51 +120,82 @@ export default function Page(){
     const tg = (window as any)?.Telegram?.WebApp
     const userId = tg?.initDataUnsafe?.user?.id
     if(!userId) return
-    ;["deep","sex","future"].forEach(async (f)=>{
+    setMyUserId(String(userId))
+
+    fetch("/api/register-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId,optIn:true})}).catch(()=>{})
+    fetch(`/api/invite/status?userId=${userId}`).then(r=>r.json()).then(j=>{
+      if(typeof j.count==="number") setRefCount(j.count)
+      if(typeof j.credits==="number") setRefCredits(j.credits)
+      if(typeof j.toNextReward==="number") setRefToNext(j.toNextReward)
+    }).catch(()=>{})
+
+    const startParam: string | undefined = tg?.initDataUnsafe?.start_param
+    if(startParam?.startsWith("ref_")){
+      setReferrerId(startParam.slice(4))
+    }
+
+    ;["deep","hidden","future"].forEach(async (f)=>{
       try{
         const r = await fetch(`/api/check-paid?userId=${userId}&feature=${f}`)
         const j = await r.json() as {paid:boolean}
         if(j.paid){
           if(f==="deep") setDeepUnlocked(true)
-          if(f==="sex") setSexUnlocked(true)
+          if(f==="hidden") setHiddenUnlocked(true)
           if(f==="future") setFutureUnlocked(true)
         }
       }catch{}
     })
   },[])
 
+  const toggleNotify = async () => {
+    const next = !notifyOn
+    setNotifyOn(next)
+    if(myUserId){
+      try{ await fetch("/api/register-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId,optIn:next})}) }catch{}
+    }
+  }
+
+  const openHistory = async () => {
+    setHistoryOpen(true)
+    if(!myUserId) return
+    setHistoryLoading(true)
+    try{
+      const r = await fetch(`/api/history?userId=${myUserId}`)
+      const j = await r.json()
+      setHistoryItems(j.items || [])
+    }catch{}
+    setHistoryLoading(false)
+  }
+
   const checkDeep = async () => {
     setDeepLoad(true)
     try{
-      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"deep", extra: deepExtra})})
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"deep", extra: deepExtra, mode})})
       const d=await r.json() as {full:string}
       setDeepRes(d.full || "")
     }catch{ setDeepRes("Ошибка") }
     setDeepLoad(false)
   }
-  const checkSex = async () => {
-    setSexLoad(true)
+  const checkHidden = async () => {
+    setHiddenLoad(true)
     try{
-      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"sex"})})
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"hidden", mode})})
       const d=await r.json() as {full:string}
-      setSexRes(d.full || "")
-    }catch{ setSexRes("Ошибка") }
-    setSexLoad(false)
+      setHiddenRes(d.full || "")
+    }catch{ setHiddenRes("Ошибка") }
+    setHiddenLoad(false)
   }
   const checkFuture = async () => {
     setFutureLoad(true)
     try{
-      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"future"})})
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"future", mode})})
       const d=await r.json() as {full:string}
       setFutureRes(d.full || "")
     }catch{ setFutureRes("Ошибка") }
     setFutureLoad(false)
   }
 
-  // buy(): unchanged network/payment logic, but now auto-opens the content
-  // right after a successful payment instead of waiting for a second tap —
-  // this is the "reduce payment friction" change.
-  const buy = async (stars: number, feature: "deep"|"sex"|"future"|"bundle") => {
+  const buy = async (stars: number, feature: "deep"|"hidden"|"future"|"bundle") => {
     const tg = (window as any)?.Telegram?.WebApp
     if(!tg){ alert("Открой через бота: Menu"); return }
     tg.ready()
@@ -162,11 +208,25 @@ export default function Page(){
       tg.openInvoice(j.invoiceLink, (s: string)=>{
         if(s==="paid"){
           if(feature==="deep"||feature==="bundle"){ setDeepUnlocked(true); checkDeep() }
-          if(feature==="sex"||feature==="bundle"){ setSexUnlocked(true); checkSex() }
+          if(feature==="hidden"||feature==="bundle"){ setHiddenUnlocked(true); checkHidden() }
           if(feature==="future"||feature==="bundle"){ setFutureUnlocked(true); checkFuture() }
         }
       })
     }catch(e:any){ alert(e.message) }
+  }
+
+  const useReferralCredit = async (feature: "deep"|"hidden"|"future" = "deep") => {
+    if(!myUserId || refCredits <= 0) return
+    try{
+      const r = await fetch("/api/invite/use-credit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId})})
+      const j = await r.json()
+      if(j.ok){
+        setRefCredits(j.remaining)
+        if(feature==="deep"){ setDeepUnlocked(true); checkDeep() }
+        if(feature==="hidden"){ setHiddenUnlocked(true); checkHidden() }
+        if(feature==="future"){ setFutureUnlocked(true); checkFuture() }
+      }
+    }catch{}
   }
 
   const check = async () => {
@@ -174,17 +234,25 @@ export default function Page(){
     setLoad(true)
     try{
       const salt = Date.now() + "_" + Math.random().toString(36).slice(2)
-      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"short", salt})})
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"short", salt, mode})})
       const d=await r.json()
       if(r.status===429) return alert(d.error)
       setRes(d as any)
+
+      if(myUserId){
+        fetch("/api/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId, percent:d.percent, full:d.full, mode})}).catch(()=>{})
+
+        if(referrerId && !refCredited){
+          setRefCredited(true)
+          fetch("/api/invite/complete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({referrerId, newUserId: myUserId})}).catch(()=>{})
+        }
+      }
     }catch{
       setRes({percent:84, full:"Выглядит как дорогая пара..."})
     }
     setLoad(false)
   }
 
-  // canvas share card — builds a shareable image client-side, no backend needed
   const shareResult = async () => {
     if(!res) return
     setSharing(true)
@@ -235,7 +303,7 @@ export default function Page(){
             await nav.share({ files:[file], title:"Love Scanner", text:`Совместимость ${res.percent}% 💘` })
             setSharing(false); return
           }
-        }catch{ /* user cancelled or unsupported — fall through to download */ }
+        }catch{ }
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
         a.href = url; a.download = "love-scanner.png"; a.click()
@@ -261,10 +329,7 @@ export default function Page(){
   const ringOffset = ringLen - (ringPct/100)*ringLen*0.75
   const highChance = res ? res.percent >= 75 : false
 
-  // Reusable envelope-reveal card: shown right after unlock, before the real
-  // content. Tapping it flips (same mechanic as the daily letter) and then
-  // triggers the content fetch. Once "opened" we just show the normal content.
-  function EnvelopeReveal({label, onOpen}:{label:string, onOpen:()=>void}){
+  function EnvelopeReveal({onOpen}:{onOpen:()=>void}){
     const [flipping,setFlipping]=useState(false)
     return (
       <div
@@ -273,7 +338,7 @@ export default function Page(){
         onClick={()=>{
           if(flipping) return
           setFlipping(true)
-          setTimeout(onOpen, 650) // let the flip animation play before showing content
+          setTimeout(onOpen, 650)
         }}
       >
         <div style={{position:"relative",width:"100%",height:"100%",transition:"transform .65s cubic-bezier(.4,.2,.2,1)",transformStyle:"preserve-3d",transform:flipping?"rotateY(180deg)":"rotateY(0deg)"}}>
@@ -336,9 +401,13 @@ export default function Page(){
         .share-btn{ transition:transform .18s }
         .share-btn:hover{ transform:translateY(-1px) }
         .share-btn:active{ transform:scale(.95) }
+        .mode-pill{ transition:transform .15s, background .2s, border-color .2s }
+        .mode-pill:active{ transform:scale(.95) }
+        .icon-btn{ transition:transform .15s, opacity .2s }
+        .icon-btn:active{ transform:scale(.9) }
+        .drawer-backdrop{ animation:fadeUp .3s ease forwards }
       `}</style>
 
-      {/* ambient */}
       <div className="blob" style={{position:"absolute",top:-130,left:-90,width:340,height:340,borderRadius:"50%",background:`radial-gradient(circle, ${red}44, transparent 70%)`,filter:"blur(60px)",pointerEvents:"none"}}/>
       <div className="blob" style={{position:"absolute",bottom:-150,right:-110,width:380,height:380,borderRadius:"50%",background:`radial-gradient(circle, ${gold}33, transparent 70%)`,filter:"blur(70px)",pointerEvents:"none",animationDelay:"3s"}}/>
       {[...Array(10)].map((_,i)=>(
@@ -347,7 +416,6 @@ export default function Page(){
 
       <div style={{width:400,maxWidth:"100%",minHeight:"100vh",display:"flex",flexDirection:"column",position:"relative",zIndex:1,padding:"0 0 28px"}}>
 
-        {/* invite banner — показывается только если открыли по ссылке ?startapp=invite_XXXX */}
         <div style={{padding:"22px 22px 0"}}>
           <InviteBanner onJoin={setInviteSessionId} />
         </div>
@@ -358,7 +426,44 @@ export default function Page(){
             <p className="mono" style={{fontSize:11,letterSpacing:"0.2em",textTransform:"uppercase",opacity:0.4}}>Archive №17</p>
             <h1 className="serif" style={{fontSize:44,lineHeight:0.92,marginTop:6}}>Love<br/>Scanner</h1>
           </div>
-          <div className="seal-idle" style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(150deg, ${red}, ${redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✦</div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <button onClick={openHistory} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>📜</button>
+            <button onClick={toggleNotify} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:notifyOn?`${gold}22`:"rgba(255,255,255,0.06)",border:`1px solid ${notifyOn?gold+"55":"rgba(255,255,255,0.1)"}`,cursor:"pointer",fontSize:14,opacity:notifyOn?1:0.5}}>🔔</button>
+            <div className="seal-idle" style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(150deg, ${red}, ${redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✦</div>
+          </div>
+        </div>
+
+        <div className="reveal" style={{padding:"0 22px",marginTop:12}}>
+          <div style={{...glass,borderRadius:16,padding:14}}>
+            {refCredits>0 ? (
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <p className="mono" style={{fontSize:10.5,opacity:0.6}}>Приглашено: <b style={{color:gold}}>{refCount}</b></p>
+                <button onClick={()=>useReferralCredit("deep")} className="unlock-btn mono" style={{height:28,padding:"0 12px",borderRadius:14,border:"none",cursor:"pointer",background:gold,color:"#221703",fontSize:10.5,fontWeight:700}}>
+                  Забрать бесплатный ({refCredits})
+                </button>
+              </div>
+            ) : (
+              <InviteFriendsButton count={refCount} toNextReward={refToNext} />
+            )}
+          </div>
+        </div>
+
+        {/* mode selector — this is what opens the product beyond couples */}
+        <div className="reveal" style={{padding:"0 22px",marginTop:18,animationDelay:".04s"}}>
+          <p className="mono" style={{fontSize:10.5,textTransform:"uppercase",opacity:0.32,letterSpacing:"0.1em"}}>Кто на фото</p>
+          <div style={{marginTop:8,display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {MODES.map(m=>(
+              <button key={m.id} onClick={()=>setMode(m.id)} className="mode-pill" style={{
+                borderRadius:14,padding:"10px 6px",cursor:"pointer",textAlign:"center",
+                background: mode===m.id ? `linear-gradient(135deg, ${red}, ${redDeep})` : "rgba(255,255,255,0.04)",
+                border: mode===m.id ? `1px solid ${red}` : "1px solid rgba(255,255,255,0.08)",
+                color:"white",
+              }}>
+                <div className="serif" style={{fontSize:15}}>{m.label}</div>
+                <div className="mono" style={{fontSize:9,opacity:0.55,marginTop:2}}>{m.sub}</div>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* daily letter seal */}
@@ -416,8 +521,7 @@ export default function Page(){
           </button>
         </div>
 
-        {/* report — либо экран сравнения с партнёром (если пришли по инвайту),
-            либо обычный отчёт со своим % и кнопкой "пригласить партнёра" */}
+        {/* report */}
         {res && inviteSessionId ? (
           <div className="reveal" style={{padding:"0 22px",marginTop:18}}>
             <div style={{...glass,borderRadius:22,padding:20,boxShadow:"0 14px 40px rgba(0,0,0,0.4)"}}>
@@ -455,13 +559,14 @@ export default function Page(){
                     ? "Процент реально высокий — можно узнать, что там думают на самом деле и как не спугнуть 👀"
                     : "Есть, что подтянуть — можно узнать точный план действий, а не гадать на кофейной гуще."}
                 </p>
-                <button onClick={shareResult} disabled={sharing} className="share-btn mono" style={{
-                  marginTop:10,height:36,padding:"0 16px",borderRadius:18,border:"1px solid rgba(255,255,255,0.14)",
-                  background:"rgba(255,255,255,0.06)",color:"white",fontSize:11.5,cursor:"pointer",
-                  display:"inline-flex",alignItems:"center",gap:6,
-                }}>{sharing? <>Готовлю картинку<Dots/></> : <>↗ Поделиться результатом</>}</button>
-
-                <InvitePartnerButton result={res} />
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                  <button onClick={shareResult} disabled={sharing} className="share-btn mono" style={{
+                    height:36,padding:"0 16px",borderRadius:18,border:"1px solid rgba(255,255,255,0.14)",
+                    background:"rgba(255,255,255,0.06)",color:"white",fontSize:11.5,cursor:"pointer",
+                    display:"inline-flex",alignItems:"center",gap:6,
+                  }}>{sharing? <>Готовлю картинку<Dots/></> : <>↗ Поделиться результатом</>}</button>
+                  <InvitePartnerButton result={res} />
+                </div>
               </div>
             </div>
           </div>
@@ -489,9 +594,8 @@ export default function Page(){
               </div>
               {!deepUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.deep}</p>}
 
-              {/* unlocked but not yet "opened" -> envelope reveal */}
               {deepUnlocked && !deepOpened && (
-                <EnvelopeReveal label="deep" onOpen={()=>{ setDeepOpened(true); checkDeep() }} />
+                <EnvelopeReveal onOpen={()=>{ setDeepOpened(true); checkDeep() }} />
               )}
 
               {deepUnlocked && deepOpened && (
@@ -504,36 +608,36 @@ export default function Page(){
               )}
             </div>
 
-            {/* sex */}
-            <div className={sexUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:sexUnlocked?`1px solid ${gold}55`:glass.border}}>
+            {/* hidden — replaces the old 18+ feature; works for couple/crush/friend alike */}
+            <div className={hiddenUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:hiddenUnlocked?`1px solid ${gold}55`:glass.border}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <p className="serif" style={{fontSize:17}}>Совместимость 18+</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Постель и чувства</p>
+                  <p className="serif" style={{fontSize:17}}>Что он(а) скрывает</p>
+                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Скрытые эмоции по языку тела</p>
                 </div>
-                {!sexUnlocked?
-                  <button onClick={()=>buy(PRICES.sex.now,"sex")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
-                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.sex.was} ✦</span>
-                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.sex.now} ✦</span>
+                {!hiddenUnlocked?
+                  <button onClick={()=>buy(PRICES.hidden.now,"hidden")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.hidden.was} ✦</span>
+                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.hidden.now} ✦</span>
                   </button>
-                  : (sexLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
+                  : (hiddenLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
               </div>
-              {!sexUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.sex}</p>}
+              {!hiddenUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.hidden}</p>}
 
-              {sexUnlocked && !sexOpened && (
-                <EnvelopeReveal label="sex" onOpen={()=>{ setSexOpened(true); checkSex() }} />
+              {hiddenUnlocked && !hiddenOpened && (
+                <EnvelopeReveal onOpen={()=>{ setHiddenOpened(true); checkHidden() }} />
               )}
 
-              {sexUnlocked && sexOpened && sexLoad && !sexRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
-              {sexUnlocked && sexOpened && sexRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{sexRes}</div>}
+              {hiddenUnlocked && hiddenOpened && hiddenLoad && !hiddenRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
+              {hiddenUnlocked && hiddenOpened && hiddenRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{hiddenRes}</div>}
             </div>
 
             {/* future */}
             <div className={futureUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:futureUnlocked?`1px solid ${gold}55`:glass.border}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <p className="serif" style={{fontSize:17}}>Будущее · Свадьба?</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Расстанетесь или вместе</p>
+                  <p className="serif" style={{fontSize:17}}>{mode==="friend" ? "Будущее · дружба" : "Будущее · Свадьба?"}</p>
+                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>{mode==="friend" ? "Останетесь ли близки" : "Расстанетесь или вместе"}</p>
                 </div>
                 {!futureUnlocked?
                   <button onClick={()=>buy(PRICES.future.now,"future")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
@@ -545,15 +649,14 @@ export default function Page(){
               {!futureUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.future}</p>}
 
               {futureUnlocked && !futureOpened && (
-                <EnvelopeReveal label="future" onOpen={()=>{ setFutureOpened(true); checkFuture() }} />
+                <EnvelopeReveal onOpen={()=>{ setFutureOpened(true); checkFuture() }} />
               )}
 
               {futureUnlocked && futureOpened && futureLoad && !futureRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
               {futureUnlocked && futureOpened && futureRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{futureRes}</div>}
             </div>
 
-            {/* bundle — anchored against the sum of individual "was" prices */}
-            {!(deepUnlocked && sexUnlocked && futureUnlocked) && (
+            {!(deepUnlocked && hiddenUnlocked && futureUnlocked) && (
               <button onClick={()=>buy(PRICES.bundle.now,"bundle")} className="bundle-pulse unlock-btn" style={{
                 marginTop:4,width:"100%",height:58,borderRadius:18,border:`1px solid ${gold}55`,cursor:"pointer",
                 background:`linear-gradient(135deg, ${gold}, #F3D998)`,color:"#221703",
@@ -570,6 +673,29 @@ export default function Page(){
           <p className="mono" style={{fontSize:10,textTransform:"uppercase",opacity:0.2,letterSpacing:"0.15em"}}>Love Scanner · Est 2026</p>
         </div>
       </div>
+
+      {/* history drawer */}
+      {historyOpen && (
+        <div className="drawer-backdrop" onClick={()=>setHistoryOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"flex-end"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"100%",maxHeight:"75vh",overflowY:"auto",...glass,background:"#0F0D0C",borderRadius:"24px 24px 0 0",padding:20}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <p className="serif" style={{fontSize:20}}>История сканов</p>
+              <button onClick={()=>setHistoryOpen(false)} className="icon-btn" style={{width:28,height:28,borderRadius:"50%",background:"rgba(255,255,255,0.08)",border:"none",color:"white",cursor:"pointer"}}>✕</button>
+            </div>
+            {historyLoading && <p className="mono" style={{fontSize:12,opacity:0.5}}>Загружаю<Dots/></p>}
+            {!historyLoading && historyItems.length===0 && <p className="mono" style={{fontSize:12,opacity:0.4}}>Пока пусто — сделай первый скан</p>}
+            {!historyLoading && historyItems.map(item=>(
+              <div key={item.id} style={{borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"12px 0"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span className="serif" style={{fontSize:16,color:gold}}>{item.percent}%</span>
+                  <span className="mono" style={{fontSize:9.5,opacity:0.4}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+                </div>
+                <p className="ai-font" style={{fontSize:12.5,marginTop:4,opacity:0.75}}>{(item.full||"").slice(0,140)}…</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -129,7 +129,7 @@ export function InviteBanner({ onJoin }: { onJoin: (sessionId: string) => void }
   )
 }
 
-// ---------- Кнопка "Пригласить партнёра" ----------
+// ---------- Кнопка "Пригласить партнёра" (сравнение результатов) ----------
 
 export function InvitePartnerButton({ result }: { result: ScanResult }) {
   const [link, setLink] = useState<string | null>(null)
@@ -227,6 +227,102 @@ export function InvitePartnerButton({ result }: { result: ScanResult }) {
       >
         {label}
       </button>
+      {copyState === "failed" && (
+        <div
+          className="mono"
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            wordBreak: "break-all",
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 10,
+            padding: "8px 10px",
+            userSelect: "all",
+          }}
+        >
+          {link}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------- Кнопка "Пригласить друзей" (реферальные кредиты) ----------
+//
+// Отдельно от InvitePartnerButton выше: та ссылка (invite_<sessionId>) — для
+// сравнения результатов вдвоём, создаётся через бэкенд. Эта — для реферальной
+// механики "пригласи 3 друзей → бесплатный разбор" (ref_<userId>), см.
+// /api/invite/complete и /api/invite/status. Ссылка строится прямо на клиенте
+// без похода в бэкенд, потому что userId уже детерминированно определяет,
+// кому засчитать награду — session тут не нужна.
+//
+// Нужен NEXT_PUBLIC_TELEGRAM_BOT_USERNAME в env (без @, например love_scanner_bot) —
+// именно с префиксом NEXT_PUBLIC_, иначе значение не попадёт в клиентский бандл.
+
+export function InviteFriendsButton({
+  count,
+  toNextReward,
+}: {
+  count?: number
+  toNextReward?: number
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
+  const userId = getTelegramUserId()
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+  const link = userId && botUsername ? `https://t.me/${botUsername}/app?startapp=ref_${userId}` : null
+
+  const share = async () => {
+    if (!link) return
+    // @ts-ignore
+    const tg = window.Telegram?.WebApp
+    if (tg?.openTelegramLink) {
+      tg.openTelegramLink(
+        `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
+          "Проверь совместимость — и заодно накинь мне бесплатный разбор 👀"
+        )}`
+      )
+      return
+    }
+    const ok = await copyToClipboard(link)
+    setCopyState(ok ? "copied" : "failed")
+    setTimeout(() => setCopyState("idle"), 2200)
+  }
+
+  if (!link) return null // нет userId (не в Telegram) или не задан NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+
+  const label =
+    copyState === "copied" ? "Ссылка скопирована ✓" : copyState === "failed" ? "Не вышло — держи ссылку ниже" : "💌 Пригласить друзей"
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={share}
+        className="unlock-btn mono"
+        style={{
+          width: "100%",
+          height: 40,
+          borderRadius: 999,
+          border: copyState === "copied" ? "1px solid rgba(120,200,140,0.5)" : "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          fontSize: 11.5,
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          background: copyState === "copied" ? "rgba(120,200,140,0.18)" : `linear-gradient(135deg, ${gold}, #F3D998)`,
+          color: copyState === "copied" ? "white" : "#221703",
+        }}
+      >
+        {label}
+      </button>
+      {typeof count === "number" && typeof toNextReward === "number" && (
+        <p className="mono" style={{ fontSize: 9.5, opacity: 0.45, textAlign: "center", marginTop: 6 }}>
+          приглашено {count} · ещё {toNextReward} до бесплатного разбора
+        </p>
+      )}
       {copyState === "failed" && (
         <div
           className="mono"
