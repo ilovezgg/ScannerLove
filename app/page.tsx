@@ -1,6 +1,8 @@
 "use client"
+// ПОЛОЖИТЬ СЮДА: app/page.tsx
 import { useState, useEffect } from "react"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
+import { getActiveEvent } from "@/lib/events"
 
 async function compress(f: File){
   const b=await createImageBitmap(f);let w=b.width,h=b.height,M=1000
@@ -48,6 +50,7 @@ const PRICES = {
   deep:   { now: 27, was: 42 },
   hidden: { now: 20, was: 32 },
   future: { now: 40, was: 65 },
+  custom: { now: 35, was: 55 },
   bundle: { now: 49, was: 42+32+65 },
 }
 
@@ -115,6 +118,27 @@ export default function Page(){
   const [futureRes,setFutureRes]=useState("")
   const [futureOpened,setFutureOpened]=useState(false)
 
+  const [isFounder,setIsFounder]=useState(false)
+  const [leaderboardOpen,setLeaderboardOpen]=useState(false)
+  const [leaderboardItems,setLeaderboardItems]=useState<any[]>([])
+  const [leaderboardLoading,setLeaderboardLoading]=useState(false)
+  const [myRank,setMyRank]=useState<number|null>(null)
+
+  const [seasonalUnlocked,setSeasonalUnlocked]=useState(false)
+  const [seasonalLoad,setSeasonalLoad]=useState(false)
+  const [seasonalRes,setSeasonalRes]=useState("")
+  const [seasonalOpened,setSeasonalOpened]=useState(false)
+  const activeEvent = getActiveEvent()
+
+  const [customUnlocked,setCustomUnlocked]=useState(false)
+  const [customLoad,setCustomLoad]=useState(false)
+  const [customRes,setCustomRes]=useState("")
+  const [customQuestion,setCustomQuestion]=useState("")
+  const [customOpened,setCustomOpened]=useState(false)
+
+  const [similarItems,setSimilarItems]=useState<string[]|null>(null)
+  const [similarLoading,setSimilarLoading]=useState(false)
+
   useEffect(()=>{
     setDaily(LETTERS[Math.floor(Math.random()*LETTERS.length)])
     const tg = (window as any)?.Telegram?.WebApp
@@ -122,11 +146,20 @@ export default function Page(){
     if(!userId) return
     setMyUserId(String(userId))
 
-    fetch("/api/register-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId,optIn:true})}).catch(()=>{})
+    fetch("/api/register-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId,optIn:true,name:tg?.initDataUnsafe?.user?.first_name})}).catch(()=>{})
     fetch(`/api/invite/status?userId=${userId}`).then(r=>r.json()).then(j=>{
       if(typeof j.count==="number") setRefCount(j.count)
       if(typeof j.credits==="number") setRefCredits(j.credits)
       if(typeof j.toNextReward==="number") setRefToNext(j.toNextReward)
+    }).catch(()=>{})
+
+    // founder-статус (топ-3 лидерборда навсегда) — если да, разблокируем всё
+    // локально сразу, не дожидаясь отдельных check-paid запросов ниже
+    fetch(`/api/leaderboard?userId=${userId}`).then(r=>r.json()).then(j=>{
+      if(j?.me?.isFounder){
+        setIsFounder(true)
+        setDeepUnlocked(true); setHiddenUnlocked(true); setFutureUnlocked(true)
+      }
     }).catch(()=>{})
 
     const startParam: string | undefined = tg?.initDataUnsafe?.start_param
@@ -167,6 +200,22 @@ export default function Page(){
     setHistoryLoading(false)
   }
 
+  const openLeaderboard = async () => {
+    setLeaderboardOpen(true)
+    setLeaderboardLoading(true)
+    try{
+      const r = await fetch(`/api/leaderboard${myUserId ? `?userId=${myUserId}` : ""}`)
+      const j = await r.json()
+      setLeaderboardItems(j.top || [])
+      setMyRank(j?.me?.rank ?? null)
+      if(j?.me?.isFounder){
+        setIsFounder(true)
+        setDeepUnlocked(true); setHiddenUnlocked(true); setFutureUnlocked(true)
+      }
+    }catch{}
+    setLeaderboardLoading(false)
+  }
+
   const checkDeep = async () => {
     setDeepLoad(true)
     try{
@@ -194,15 +243,47 @@ export default function Page(){
     }catch{ setFutureRes("Ошибка") }
     setFutureLoad(false)
   }
+  const checkSeasonal = async () => {
+    if(!activeEvent) return
+    setSeasonalLoad(true)
+    try{
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"seasonal", mode, eventId:activeEvent.id})})
+      const d=await r.json() as {full:string}
+      setSeasonalRes(d.full || "")
+    }catch{ setSeasonalRes("Ошибка") }
+    setSeasonalLoad(false)
+  }
 
-  const buy = async (stars: number, feature: "deep"|"hidden"|"future"|"bundle") => {
+  const checkCustom = async () => {
+    if(!customQuestion.trim()) return
+    setCustomLoad(true)
+    try{
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"custom", extra: customQuestion, mode})})
+      const d=await r.json() as {full:string}
+      setCustomRes(d.full || "")
+    }catch{ setCustomRes("Ошибка") }
+    setCustomLoad(false)
+  }
+
+  const loadSimilar = async () => {
+    if(!res) return
+    setSimilarLoading(true)
+    try{
+      const r = await fetch(`/api/similar?percent=${res.percent}&mode=${mode}`)
+      const j = await r.json()
+      setSimilarItems(j.items || [])
+    }catch{ setSimilarItems([]) }
+    setSimilarLoading(false)
+  }
+
+  const buy = async (stars: number, feature: "deep"|"hidden"|"future"|"bundle"|"seasonal"|"custom") => {
     const tg = (window as any)?.Telegram?.WebApp
     if(!tg){ alert("Открой через бота: Menu"); return }
     tg.ready()
     const userId = tg?.initDataUnsafe?.user?.id
     if(!userId) return
     try{
-      const r = await fetch("/api/stars/create",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({stars, feature, userId})})
+      const r = await fetch("/api/stars/create",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({stars, feature, userId, eventId: feature==="seasonal" ? activeEvent?.id : undefined})})
       const j = await r.json()
       if(!j.invoiceLink){ alert("Ошибка оплаты: "+(j.error||"no link")); return }
       tg.openInvoice(j.invoiceLink, (s: string)=>{
@@ -210,6 +291,8 @@ export default function Page(){
           if(feature==="deep"||feature==="bundle"){ setDeepUnlocked(true); checkDeep() }
           if(feature==="hidden"||feature==="bundle"){ setHiddenUnlocked(true); checkHidden() }
           if(feature==="future"||feature==="bundle"){ setFutureUnlocked(true); checkFuture() }
+          if(feature==="seasonal"){ setSeasonalUnlocked(true); checkSeasonal() }
+          if(feature==="custom"){ setCustomUnlocked(true) } // ждём вопрос от юзера, не дёргаем checkCustom() сразу
         }
       })
     }catch(e:any){ alert(e.message) }
@@ -238,6 +321,13 @@ export default function Page(){
       const d=await r.json()
       if(r.status===429) return alert(d.error)
       setRes(d as any)
+      setSimilarItems(null) // сбрасываем "у других" от прошлого скана
+
+      // анонимный отрывок в общий пул для "у кого был похожий %" — без userId,
+      // без фото, только % и короткий кусок уже показанного юзеру текста
+      if(typeof d.percent === "number" && d.full){
+        fetch("/api/similar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({percent:d.percent, snippet:String(d.full).slice(0,120), mode})}).catch(()=>{})
+      }
 
       if(myUserId){
         fetch("/api/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId, percent:d.percent, full:d.full, mode})}).catch(()=>{})
@@ -427,11 +517,36 @@ export default function Page(){
             <h1 className="serif" style={{fontSize:44,lineHeight:0.92,marginTop:6}}>Love<br/>Scanner</h1>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {isFounder && <div className="icon-btn" title="Founder" style={{width:34,height:34,borderRadius:"50%",background:`${gold}22`,border:`1px solid ${gold}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>👑</div>}
+            <button onClick={openLeaderboard} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>🏆</button>
             <button onClick={openHistory} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>📜</button>
             <button onClick={toggleNotify} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:notifyOn?`${gold}22`:"rgba(255,255,255,0.06)",border:`1px solid ${notifyOn?gold+"55":"rgba(255,255,255,0.1)"}`,cursor:"pointer",fontSize:14,opacity:notifyOn?1:0.5}}>🔔</button>
             <div className="seal-idle" style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(150deg, ${red}, ${redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✦</div>
           </div>
         </div>
+
+        {/* сезонный лимитированный ивент */}
+        {activeEvent && (
+          <div className="reveal" style={{padding:"0 22px",marginTop:12}}>
+            <div style={{...glass,borderRadius:18,padding:16,border:`1px solid ${gold}55`,background:`linear-gradient(135deg, ${gold}14, rgba(255,255,255,0.03))`}}>
+              <p className="mono" style={{fontSize:10,color:gold,textTransform:"uppercase",letterSpacing:"0.08em"}}>{activeEvent.emoji} Лимитированный ивент</p>
+              <p className="serif" style={{fontSize:19,marginTop:6}}>{activeEvent.title}</p>
+              <p className="mono" style={{fontSize:10.5,opacity:0.5,marginTop:4}}>{activeEvent.bannerText}</p>
+              {!seasonalUnlocked ? (
+                <button onClick={()=>buy(activeEvent.price,"seasonal")} className="unlock-btn mono" style={{marginTop:12,width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${gold}, #F3D998)`,color:"#221703",fontWeight:700,fontSize:12}}>
+                  {activeEvent.buttonLabel}
+                </button>
+              ) : !seasonalOpened ? (
+                <EnvelopeReveal onOpen={()=>{ setSeasonalOpened(true); checkSeasonal() }} />
+              ) : (
+                <>
+                  {seasonalLoad && !seasonalRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
+                  {seasonalRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{seasonalRes}</div>}
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="reveal" style={{padding:"0 22px",marginTop:12}}>
           <div style={{...glass,borderRadius:16,padding:14}}>
@@ -567,6 +682,22 @@ export default function Page(){
                   }}>{sharing? <>Готовлю картинку<Dots/></> : <>↗ Поделиться результатом</>}</button>
                   <InvitePartnerButton result={res} />
                 </div>
+
+                {similarItems===null ? (
+                  <button onClick={loadSimilar} disabled={similarLoading} className="share-btn mono" style={{
+                    marginTop:8,height:34,padding:"0 14px",borderRadius:17,border:"1px solid rgba(255,255,255,0.12)",
+                    background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11,cursor:"pointer",
+                  }}>{similarLoading? <>Смотрю у других<Dots/></> : "👀 Что было у других с похожим %"}</button>
+                ) : similarItems.length>0 ? (
+                  <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
+                    <p className="mono" style={{fontSize:9.5,opacity:0.4,textTransform:"uppercase",letterSpacing:"0.06em"}}>Похожий процент у других</p>
+                    {similarItems.map((s,i)=>(
+                      <div key={i} className="ai-font" style={{fontSize:12.5,opacity:0.7,borderLeft:`2px solid ${gold}55`,paddingLeft:10}}>{s}…</div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mono" style={{fontSize:10.5,opacity:0.35,marginTop:8}}>Пока маловато данных с похожим % — загляни попозже</p>
+                )}
               </div>
             </div>
           </div>
@@ -656,6 +787,43 @@ export default function Page(){
               {futureUnlocked && futureOpened && futureRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{futureRes}</div>}
             </div>
 
+            {/* custom — "спроси что угодно", свой вопрос вместо готовой категории */}
+            <div className={customUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:customUnlocked?`1px solid ${gold}55`:glass.border}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <p className="serif" style={{fontSize:17}}>Спроси что угодно</p>
+                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Свой вопрос про эту пару</p>
+                </div>
+                {!customUnlocked?
+                  <button onClick={()=>buy(PRICES.custom.now,"custom")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${red}, ${redDeep})`,color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.custom.was} ✦</span>
+                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.custom.now} ✦</span>
+                  </button>
+                  : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>}
+              </div>
+              {!customUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>...стоит спросить прямо то, что действительно не даёт покоя — не общими словами, а ровно то, что волнует именно тебя, и получить ответ без уклонений и шаблонных фраз, которые ничего на самом деле не...</p>}
+
+              {customUnlocked && !customOpened && (
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
+                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Например: поженимся ли мы? стоит ли ждать? он(а) вообще думает обо мне?" className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
+                  <button onClick={()=>{ setCustomOpened(true); checkCustom() }} disabled={!customQuestion.trim()} className="unlock-btn" style={{width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:gold,color:"#221703",fontWeight:700,opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:12}}>Задать вопрос</span></button>
+                </div>
+              )}
+
+              {customUnlocked && customOpened && (
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
+                  {customLoad && !customRes && <div style={{borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:70}}/>}
+                  {customRes && <div className="ai-font" style={{borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{customRes}</div>}
+                  {customRes && (
+                    <>
+                      <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Задай ещё один вопрос..." className="mono letter-area" style={{width:"100%",minHeight:50,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
+                      <button onClick={checkCustom} disabled={!customQuestion.trim()||customLoad} className="unlock-btn" style={{width:"100%",height:36,borderRadius:18,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.1)",color:"white",opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:11.5}}>{customLoad? <>Спрашиваю<Dots/></> : "Спросить ещё раз"}</span></button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {!(deepUnlocked && hiddenUnlocked && futureUnlocked) && (
               <button onClick={()=>buy(PRICES.bundle.now,"bundle")} className="bundle-pulse unlock-btn" style={{
                 marginTop:4,width:"100%",height:58,borderRadius:18,border:`1px solid ${gold}55`,cursor:"pointer",
@@ -693,6 +861,33 @@ export default function Page(){
                 <p className="ai-font" style={{fontSize:12.5,marginTop:4,opacity:0.75}}>{(item.full||"").slice(0,140)}…</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* leaderboard drawer */}
+      {leaderboardOpen && (
+        <div className="drawer-backdrop" onClick={()=>setLeaderboardOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"flex-end"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"100%",maxHeight:"75vh",overflowY:"auto",...glass,background:"#0F0D0C",borderRadius:"24px 24px 0 0",padding:20}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <p className="serif" style={{fontSize:20}}>Лидерборд приглашений</p>
+              <button onClick={()=>setLeaderboardOpen(false)} className="icon-btn" style={{width:28,height:28,borderRadius:"50%",background:"rgba(255,255,255,0.08)",border:"none",color:"white",cursor:"pointer"}}>✕</button>
+            </div>
+            <p className="mono" style={{fontSize:10,opacity:0.4,marginBottom:14}}>Топ-3 навсегда получают 👑 — бесплатный доступ ко всем разборам</p>
+            {leaderboardLoading && <p className="mono" style={{fontSize:12,opacity:0.5}}>Загружаю<Dots/></p>}
+            {!leaderboardLoading && leaderboardItems.length===0 && <p className="mono" style={{fontSize:12,opacity:0.4}}>Пока никто не пригласил ни одного друга — будь первым</p>}
+            {!leaderboardLoading && leaderboardItems.map((item,i)=>(
+              <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"11px 0",background: item.id===myUserId ? `${gold}0f` : "transparent"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span className="mono" style={{fontSize:13,width:20,opacity:0.5}}>{i<3?["🥇","🥈","🥉"][i]:`#${i+1}`}</span>
+                  <span className="serif" style={{fontSize:15}}>{item.name}{item.id===myUserId?" (ты)":""}</span>
+                </div>
+                <span className="mono" style={{fontSize:12,color:gold,fontWeight:700}}>{item.count}</span>
+              </div>
+            ))}
+            {myRank && myRank>10 && (
+              <p className="mono" style={{fontSize:10.5,opacity:0.4,marginTop:12,textAlign:"center"}}>Твоё место: #{myRank}</p>
+            )}
           </div>
         </div>
       )}

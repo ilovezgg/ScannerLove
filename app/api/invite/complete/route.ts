@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { kvGet, kvSet, kvIncr } from '@/lib/kv'
+import { kvGet, kvSet, kvIncr, kvSadd } from '@/lib/kv'
 
 const INVITES_PER_REWARD = 3
 
@@ -18,6 +18,7 @@ export async function POST(req: NextRequest){
 
     await kvSet(creditedKey, true)
     const count = await kvIncr(`ref:count:${referrerId}`)
+    await kvSadd("ref:referrers", String(referrerId)) // для лидерборда — множество всех, у кого есть хоть 1 реферал
 
     let newReward = false
     if(count % INVITES_PER_REWARD === 0){
