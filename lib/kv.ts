@@ -1,4 +1,4 @@
-// lib/kv.ts
+// ПОЛОЖИТЬ СЮДА: lib/kv.ts
 //
 // Единая точка доступа к хранилищу для всех новых фич (пуши, рефералка, история).
 // Пытается использовать @vercel/kv, если он настроен (KV_REST_API_URL/KV_REST_API_TOKEN
@@ -80,10 +80,15 @@ export async function kvSmembers(key: string): Promise<string[]>{
 }
 
 // lists — used for scan history (most recent first, capped)
+// ВАЖНО: @vercel/kv УЖЕ сам сериализует/десериализует значения в JSON под
+// капотом. Раньше здесь стоял ручной JSON.stringify/parse поверх этого —
+// двойная упаковка, из-за которой чтение падало с ошибкой парсинга и список
+// (например история сканов) тихо возвращался пустым. Больше не трогаем
+// сериализацию руками — передаём значения как есть.
 export async function kvListPush(key: string, value: Json, cap = 50){
   if(hasVercelKV){
     const kv = await vercelKv()
-    await kv.lpush(key, JSON.stringify(value))
+    await kv.lpush(key, value)
     await kv.ltrim(key, 0, cap - 1)
     return
   }
@@ -96,7 +101,7 @@ export async function kvListAll<T = Json>(key: string): Promise<T[]>{
   if(hasVercelKV){
     const kv = await vercelKv()
     const raw = await kv.lrange(key, 0, -1)
-    return raw.map((r: string)=> typeof r === "string" ? JSON.parse(r) : r)
+    return raw as T[]
   }
   return ((memStore.get(key) as T[]) || [])
 }

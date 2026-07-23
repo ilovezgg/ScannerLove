@@ -1,6 +1,6 @@
 "use client"
 // ПОЛОЖИТЬ СЮДА: app/page.tsx
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 import { getActiveEvent } from "@/lib/events"
 
@@ -132,6 +132,7 @@ export default function Page(){
 
   const [myUserId,setMyUserId]=useState<string|null>(null)
   const [notifyOn,setNotifyOn]=useState(true)
+  const [soundOn,setSoundOn]=useState(true)
   const [inviteSessionId,setInviteSessionId]=useState<string|null>(null)
   const [referrerId,setReferrerId]=useState<string|null>(null) // from ?startapp=ref_<id>
   const [refCredited,setRefCredited]=useState(false) // guards against double /invite/complete calls
@@ -195,6 +196,13 @@ export default function Page(){
   const [similarLoading,setSimilarLoading]=useState(false)
 
   useEffect(()=>{
+    try{
+      const saved = localStorage.getItem("love_scanner_sound")
+      if(saved !== null) setSoundOn(saved === "1")
+    }catch{}
+  },[])
+
+  useEffect(()=>{
     setDaily(LETTERS[Math.floor(Math.random()*LETTERS.length)])
     const tg = (window as any)?.Telegram?.WebApp
     const userId = tg?.initDataUnsafe?.user?.id
@@ -241,6 +249,15 @@ export default function Page(){
       setHasFreeCustomCredit(!!j.hasCredit)
     }).catch(()=>{})
   },[])
+
+  const toggleSound = () => {
+    setSoundOn(prev=>{
+      const next = !prev
+      try{ localStorage.setItem("love_scanner_sound", next ? "1" : "0") }catch{}
+      if(next) setTimeout(()=>playSoundRaw("tap"), 50) // подтверждение звуком, что включили
+      return next
+    })
+  }
 
   const toggleNotify = async () => {
     const next = !notifyOn
@@ -305,6 +322,7 @@ export default function Page(){
   const spinWheel = async () => {
     if(!myUserId || wheelSpinning || wheelSpunToday) return
     setWheelSpinning(true)
+    playSound("spin"); haptic("medium")
     try{
       const r = await fetch("/api/wheel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId})})
       const j = await r.json()
@@ -313,6 +331,7 @@ export default function Page(){
       if(j.prize){
         setWheelPrize(j.prize)
         setWheelSpunToday(true)
+        playSound("coin"); haptic("success")
         if(j.prize.prizeId==="free_custom") setHasFreeCustomCredit(true)
       }
     }catch{}
@@ -409,6 +428,7 @@ export default function Page(){
     if(!userId) return
 
     const unlockLocally = () => {
+      playSound("coin"); haptic("success")
       if(feature==="deep"||feature==="bundle"){ setDeepUnlocked(true); checkDeep() }
       if(feature==="hidden"||feature==="bundle"){ setHiddenUnlocked(true); checkHidden() }
       if(feature==="future"||feature==="bundle"){ setFutureUnlocked(true); checkFuture() }
@@ -427,6 +447,13 @@ export default function Page(){
         if(j.ok){ setHasFreeCustomCredit(false); unlockLocally(); return }
       }catch{}
     }
+
+    // тестеры — список Telegram user ID в NEXT_PUBLIC_TESTER_IDS (через запятую)
+    // получают все разборы бесплатно, оплата полностью минуется.
+    // Дефолт ниже — те 3 ID, что вы прислали в чате; если зададите
+    // NEXT_PUBLIC_TESTER_IDS в env, он полностью заменит этот список.
+    const testerIds = (process.env.NEXT_PUBLIC_TESTER_IDS || "1788475335,697267322,675311608").split(",").map(s=>s.trim()).filter(Boolean)
+    if(testerIds.includes(String(userId))){ unlockLocally(); return }
 
     try{
       const r = await fetch("/api/stars/create",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({stars, feature, userId, eventId: feature==="seasonal" ? activeEvent?.id : undefined})})
@@ -559,6 +586,46 @@ export default function Page(){
   const redDeep = "#7A1015"
   const gold = "#E9C77B"
 
+  // ---- звук и хаптика ----
+  // Звуки генерируются на лету через Web Audio API — никаких mp3-файлов,
+  // ничего не грузится по сети, работает офлайн. Хаптика — нативный
+  // Telegram WebApp API, лёгкая вибро-отдача.
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const getAudioCtx = () => {
+    if(!audioCtxRef.current){
+      try{ audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)() }catch{ return null }
+    }
+    return audioCtxRef.current
+  }
+  const playSoundRaw = (kind: "tap"|"unlock"|"coin"|"spin") => {
+    const ctx = getAudioCtx()
+    if(!ctx) return
+    const now = ctx.currentTime
+    const tone = (freq:number, start:number, dur:number, type:OscillatorType="sine", vol=0.08) => {
+      const osc = ctx.createOscillator(); const gain = ctx.createGain()
+      osc.type = type; osc.frequency.setValueAtTime(freq, now+start)
+      gain.gain.setValueAtTime(0, now+start)
+      gain.gain.linearRampToValueAtTime(vol, now+start+0.01)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now+start+dur)
+      osc.connect(gain); gain.connect(ctx.destination)
+      osc.start(now+start); osc.stop(now+start+dur+0.02)
+    }
+    if(kind==="tap") tone(700, 0, 0.06, "sine", 0.05)
+    if(kind==="unlock"){ tone(520,0,0.12,"sine",0.07); tone(780,0.08,0.18,"sine",0.08) }
+    if(kind==="coin"){ tone(660,0,0.08,"triangle",0.08); tone(880,0.07,0.1,"triangle",0.08); tone(1100,0.14,0.16,"triangle",0.09) }
+    if(kind==="spin") tone(300,0,0.4,"sawtooth",0.03)
+  }
+  const playSound = (kind: "tap"|"unlock"|"coin"|"spin") => { if(soundOn) playSoundRaw(kind) }
+  const haptic = (style: "light"|"medium"|"success"|"error" = "light") => {
+    const tg = (window as any)?.Telegram?.WebApp
+    const h = tg?.HapticFeedback
+    if(!h) return
+    if(style==="success") h.notificationOccurred?.("success")
+    else if(style==="error") h.notificationOccurred?.("error")
+    else h.impactOccurred?.(style==="medium" ? "medium" : "light")
+  }
+  const tapFx = () => { playSound("tap"); haptic("light") }
+
   const glass:React.CSSProperties = {
     background:"linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.02))",
     backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
@@ -580,6 +647,7 @@ export default function Page(){
         onClick={()=>{
           if(flipping) return
           setFlipping(true)
+          playSound("unlock"); haptic("medium")
           setTimeout(onOpen, 650)
         }}
       >
@@ -677,6 +745,7 @@ export default function Page(){
             </button>
             <button onClick={openHistory} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>📜</button>
             <button onClick={toggleNotify} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:notifyOn?`${gold}22`:"rgba(255,255,255,0.06)",border:`1px solid ${notifyOn?gold+"55":"rgba(255,255,255,0.1)"}`,cursor:"pointer",fontSize:14,opacity:notifyOn?1:0.5}}>🔔</button>
+            <button onClick={toggleSound} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",fontSize:14,opacity:soundOn?1:0.5}}>{soundOn?"🔊":"🔇"}</button>
             <div className="seal-idle" style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(150deg, ${red}, ${redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✦</div>
           </div>
         </div>
@@ -689,7 +758,7 @@ export default function Page(){
               <p className="serif" style={{fontSize:16,marginTop:5}}>Как ты сегодня?</p>
               <div style={{marginTop:9,display:"flex",flexWrap:"wrap",gap:7}}>
                 {MOOD_OPTIONS.map(m=>(
-                  <button key={m.id} onClick={()=>saveMood(m.id)} disabled={moodSaving} className="unlock-btn mono" style={{
+                  <button key={m.id} onClick={()=>{ tapFx(); saveMood(m.id) }} disabled={moodSaving} className="unlock-btn mono" style={{
                     padding:"7px 12px",borderRadius:14,border:"1px solid rgba(255,255,255,0.1)",
                     background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.75)",fontSize:11.5,cursor:"pointer",
                   }}>{m.label}</button>
@@ -742,7 +811,7 @@ export default function Page(){
           <p className="mono" style={{fontSize:10.5,textTransform:"uppercase",opacity:0.32,letterSpacing:"0.1em"}}>Кто на фото</p>
           <div style={{marginTop:8,display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             {MODES.map(m=>(
-              <button key={m.id} onClick={()=>setMode(m.id)} className="mode-pill" style={{
+              <button key={m.id} onClick={()=>{ tapFx(); setMode(m.id) }} className="mode-pill" style={{
                 borderRadius:14,padding:"10px 6px",cursor:"pointer",textAlign:"center",
                 background: mode===m.id ? `linear-gradient(135deg, ${red}, ${redDeep})` : "rgba(255,255,255,0.04)",
                 border: mode===m.id ? `1px solid ${red}` : "1px solid rgba(255,255,255,0.08)",
@@ -799,7 +868,7 @@ export default function Page(){
 
         {/* cta */}
         <div className="reveal" style={{padding:"0 22px",marginTop:22,animationDelay:".2s"}}>
-          <button onClick={check} disabled={load} className="cta" style={{
+          <button onClick={()=>{ tapFx(); check() }} disabled={load} className="cta" style={{
             width:"100%",height:54,borderRadius:999,border:"none",cursor:"pointer",
             background:`linear-gradient(120deg, ${red}, ${redDeep}, ${red})`,
             color:"white",display:"flex",alignItems:"center",justifyContent:"center",gap:10,
@@ -1087,7 +1156,14 @@ export default function Page(){
             {wheelPrize ? (
               <div className="reveal">
                 <p className="ai-font" style={{fontSize:15,padding:"0 6px"}}>{wheelPrize.label}</p>
-                <p className="mono" style={{fontSize:10,opacity:0.4,marginTop:10}}>Возвращайся завтра за новым призом</p>
+                {wheelPrize.prizeId==="free_custom" && hasFreeCustomCredit ? (
+                  <button onClick={()=>{ setSelectedCard("custom"); setWheelOpen(false) }} className="unlock-btn mono" style={{
+                    marginTop:14,width:"100%",height:42,borderRadius:21,border:"none",cursor:"pointer",
+                    background:`linear-gradient(135deg, ${gold}, #F3D998)`,color:"#221703",fontWeight:700,fontSize:12,
+                  }}>Забрать сейчас →</button>
+                ) : (
+                  <p className="mono" style={{fontSize:10,opacity:0.4,marginTop:10}}>Возвращайся завтра за новым призом</p>
+                )}
               </div>
             ) : (
               <button onClick={spinWheel} disabled={wheelSpinning} className="unlock-btn mono" style={{
