@@ -63,6 +63,47 @@ const DECOY_TEASERS = {
   future: "...если смотреть на это трезво, а не сквозь розовые очки, то ключевой момент прячется совсем не там, где его обычно ищут — и один нюанс на фото говорит о том, что решится всё гораздо раньше, чем...",
 }
 
+const SUGGESTED_QUESTIONS: Record<Mode, string[]> = {
+  couple: [
+    "Что он(а) на самом деле ко мне чувствует?",
+    "Стоит ли нам пожениться?",
+    "Почему в последнее время холодно между нами?",
+    "О чём он(а) думает, но не говорит?",
+    "Есть ли шанс, что он(а) изменяет?",
+    "Как удержать эти отношения?",
+  ],
+  crush: [
+    "Замечает ли он(а) меня вообще?",
+    "Стоит ли сделать первый шаг?",
+    "Что он(а) думает обо мне?",
+    "Есть ли у меня шанс?",
+    "Почему он(а) не отвечает сразу?",
+    "Ревнует ли он(а) меня к другим?",
+  ],
+  friend: [
+    "Можно ли доверять этому человеку?",
+    "Считает ли он(а) меня близким другом?",
+    "Стоит ли начинать совместный проект?",
+    "Что он(а) думает обо мне на самом деле?",
+    "Почему в последнее время реже общаемся?",
+    "Стоит ли звать его(её) в важные планы?",
+  ],
+}
+
+function pickQuestions(mode: Mode, seed: number){
+  const pool = SUGGESTED_QUESTIONS[mode]
+  const start = seed % pool.length
+  return [...pool.slice(start), ...pool.slice(0, start)].slice(0, 4)
+}
+
+const MOOD_OPTIONS = [
+  { id:"up",      label:"На подъёме" },
+  { id:"calm",    label:"Спокойно" },
+  { id:"tired",   label:"Устал(а)" },
+  { id:"anxious", label:"Тревожно" },
+  { id:"sad",     label:"Грустновато" },
+]
+
 function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number){
   const words = text.split(" ")
   let line = ""
@@ -84,6 +125,7 @@ export default function Page(){
   const [mode,setMode]=useState<Mode>("couple")
   const [load,setLoad]=useState(false)
   const [res,setRes]=useState<{percent:number, full:string}|null>(null)
+  const [scanId,setScanId]=useState<string|null>(null)
   const [sealBroken,setSealBroken]=useState(false)
   const [daily,setDaily]=useState(LETTERS[0])
   const [sharing,setSharing]=useState(false)
@@ -101,6 +143,7 @@ export default function Page(){
   const [historyOpen,setHistoryOpen]=useState(false)
   const [historyItems,setHistoryItems]=useState<any[]>([])
   const [historyLoading,setHistoryLoading]=useState(false)
+  const [viewingHistoryScan,setViewingHistoryScan]=useState(false)
 
   const [deepUnlocked,setDeepUnlocked]=useState(false)
   const [deepLoad,setDeepLoad]=useState(false)
@@ -135,6 +178,18 @@ export default function Page(){
   const [customRes,setCustomRes]=useState("")
   const [customQuestion,setCustomQuestion]=useState("")
   const [customOpened,setCustomOpened]=useState(false)
+  const [chipSeed,setChipSeed]=useState(0)
+  const [selectedCard,setSelectedCard]=useState<"deep"|"hidden"|"future"|"custom">("deep")
+
+  const [todayMood,setTodayMood]=useState<string|null>(null)
+  const [moodLoaded,setMoodLoaded]=useState(false)
+  const [moodSaving,setMoodSaving]=useState(false)
+
+  const [hasFreeCustomCredit,setHasFreeCustomCredit]=useState(false)
+  const [wheelOpen,setWheelOpen]=useState(false)
+  const [wheelSpinning,setWheelSpinning]=useState(false)
+  const [wheelSpunToday,setWheelSpunToday]=useState(false)
+  const [wheelPrize,setWheelPrize]=useState<{prizeId:string,label:string}|null>(null)
 
   const [similarItems,setSimilarItems]=useState<string[]|null>(null)
   const [similarLoading,setSimilarLoading]=useState(false)
@@ -162,22 +217,29 @@ export default function Page(){
       }
     }).catch(()=>{})
 
+    fetch(`/api/mood?userId=${userId}`).then(r=>r.json()).then(j=>{
+      setTodayMood(j.mood || null)
+      setMoodLoaded(true)
+    }).catch(()=>setMoodLoaded(true))
+
     const startParam: string | undefined = tg?.initDataUnsafe?.start_param
     if(startParam?.startsWith("ref_")){
       setReferrerId(startParam.slice(4))
     }
 
-    ;["deep","hidden","future"].forEach(async (f)=>{
-      try{
-        const r = await fetch(`/api/check-paid?userId=${userId}&feature=${f}`)
-        const j = await r.json() as {paid:boolean}
-        if(j.paid){
-          if(f==="deep") setDeepUnlocked(true)
-          if(f==="hidden") setHiddenUnlocked(true)
-          if(f==="future") setFutureUnlocked(true)
-        }
-      }catch{}
-    })
+    // ПРИМЕЧАНИЕ: старая глобальная проверка /api/check-paid?feature=X убрана
+    // намеренно — при новой модели разблокировка привязана к конкретному
+    // scanId, а не к юзеру целиком, так что "заранее" проверять на маунте
+    // просто нечего: новый скан всегда стартует полностью заблокированным.
+
+    fetch(`/api/wheel?userId=${userId}`).then(r=>r.json()).then(j=>{
+      setWheelSpunToday(!!j.spunToday)
+      if(j.prize) setWheelPrize(j.prize)
+    }).catch(()=>{})
+
+    fetch(`/api/custom-credit/use?userId=${userId}`).then(r=>r.json()).then(j=>{
+      setHasFreeCustomCredit(!!j.hasCredit)
+    }).catch(()=>{})
   },[])
 
   const toggleNotify = async () => {
@@ -193,11 +255,35 @@ export default function Page(){
     if(!myUserId) return
     setHistoryLoading(true)
     try{
-      const r = await fetch(`/api/history?userId=${myUserId}`)
+      const r = await fetch(`/api/scan/list?userId=${myUserId}`)
       const j = await r.json()
       setHistoryItems(j.items || [])
     }catch{}
     setHistoryLoading(false)
+  }
+
+  // открыть прошлый скан из истории — режим только на чтение: показываем то,
+  // что уже было куплено и сгенерировано (текст сохранён в /api/scan/result),
+  // фото не хранятся, поэтому докупить НОВУЮ категорию для старого скана нельзя —
+  // это ограничение архитектуры, не баг (см. пояснение в чате)
+  const openHistoryScan = async (id: string) => {
+    try{
+      const r = await fetch(`/api/scan?scanId=${id}`)
+      const j = await r.json()
+      if(!j.scan) return
+      const s = j.scan
+      setRes({ percent: s.percent, full: s.full })
+      setScanId(s.scanId)
+      setMode(s.mode)
+      setViewingHistoryScan(true)
+      setHistoryOpen(false)
+
+      setDeepUnlocked(!!s.unlocked.deep); setDeepOpened(!!s.unlocked.deep); setDeepRes(s.results.deep || "")
+      setHiddenUnlocked(!!s.unlocked.hidden); setHiddenOpened(!!s.unlocked.hidden); setHiddenRes(s.results.hidden || "")
+      setFutureUnlocked(!!s.unlocked.future); setFutureOpened(!!s.unlocked.future); setFutureRes(s.results.future || "")
+      setCustomUnlocked(!!s.unlocked.custom); setCustomOpened(!!s.unlocked.custom); setCustomRes(s.results.custom || "")
+      setSimilarItems(null)
+    }catch{}
   }
 
   const openLeaderboard = async () => {
@@ -216,35 +302,73 @@ export default function Page(){
     setLeaderboardLoading(false)
   }
 
+  const spinWheel = async () => {
+    if(!myUserId || wheelSpinning || wheelSpunToday) return
+    setWheelSpinning(true)
+    try{
+      const r = await fetch("/api/wheel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId})})
+      const j = await r.json()
+      // небольшая пауза ради ощущения "кручения", даже если ответ пришёл мгновенно
+      await new Promise(res=>setTimeout(res, 1400))
+      if(j.prize){
+        setWheelPrize(j.prize)
+        setWheelSpunToday(true)
+        if(j.prize.prizeId==="free_custom") setHasFreeCustomCredit(true)
+      }
+    }catch{}
+    setWheelSpinning(false)
+  }
+
+  const saveMood = async (moodId: string) => {
+    if(!myUserId) return
+    setMoodSaving(true)
+    try{
+      await fetch("/api/mood",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId, mood:moodId})})
+      setTodayMood(moodId)
+    }catch{}
+    setMoodSaving(false)
+  }
+
+  const saveScanResult = (feature: "deep"|"hidden"|"future"|"custom", text: string) => {
+    if(!scanId || !text) return
+    fetch("/api/scan/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scanId, feature, text})}).catch(()=>{})
+  }
+
   const checkDeep = async () => {
+    if(viewingHistoryScan) return // фото старого скана не хранятся — регенерация недоступна, показываем сохранённый текст как есть
     setDeepLoad(true)
     try{
       const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"deep", extra: deepExtra, mode})})
       const d=await r.json() as {full:string}
       setDeepRes(d.full || "")
+      saveScanResult("deep", d.full || "")
     }catch{ setDeepRes("Ошибка") }
     setDeepLoad(false)
   }
   const checkHidden = async () => {
+    if(viewingHistoryScan) return
     setHiddenLoad(true)
     try{
       const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"hidden", mode})})
       const d=await r.json() as {full:string}
       setHiddenRes(d.full || "")
+      saveScanResult("hidden", d.full || "")
     }catch{ setHiddenRes("Ошибка") }
     setHiddenLoad(false)
   }
   const checkFuture = async () => {
+    if(viewingHistoryScan) return
     setFutureLoad(true)
     try{
       const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"future", mode})})
       const d=await r.json() as {full:string}
       setFutureRes(d.full || "")
+      saveScanResult("future", d.full || "")
     }catch{ setFutureRes("Ошибка") }
     setFutureLoad(false)
   }
   const checkSeasonal = async () => {
-    if(!activeEvent) return
+    if(!activeEvent || viewingHistoryScan) return
     setSeasonalLoad(true)
     try{
       const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"seasonal", mode, eventId:activeEvent.id})})
@@ -255,12 +379,13 @@ export default function Page(){
   }
 
   const checkCustom = async () => {
-    if(!customQuestion.trim()) return
+    if(viewingHistoryScan || !customQuestion.trim()) return
     setCustomLoad(true)
     try{
       const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"custom", extra: customQuestion, mode})})
       const d=await r.json() as {full:string}
       setCustomRes(d.full || "")
+      saveScanResult("custom", d.full || "")
     }catch{ setCustomRes("Ошибка") }
     setCustomLoad(false)
   }
@@ -282,18 +407,33 @@ export default function Page(){
     tg.ready()
     const userId = tg?.initDataUnsafe?.user?.id
     if(!userId) return
+
+    const unlockLocally = () => {
+      if(feature==="deep"||feature==="bundle"){ setDeepUnlocked(true); checkDeep() }
+      if(feature==="hidden"||feature==="bundle"){ setHiddenUnlocked(true); checkHidden() }
+      if(feature==="future"||feature==="bundle"){ setFutureUnlocked(true); checkFuture() }
+      if(feature==="seasonal"){ setSeasonalUnlocked(true); checkSeasonal() }
+      if(feature==="custom"){ setCustomUnlocked(true) } // ждём вопрос от юзера, не дёргаем checkCustom() сразу
+      if(scanId && feature!=="seasonal"){
+        fetch("/api/scan/unlock",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scanId, feature})}).catch(()=>{})
+      }
+    }
+
+    // бесплатный кредит "Спроси что угодно" с колеса удачи — минуем оплату целиком
+    if(feature==="custom" && hasFreeCustomCredit){
+      try{
+        const r = await fetch("/api/custom-credit/use",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId})})
+        const j = await r.json()
+        if(j.ok){ setHasFreeCustomCredit(false); unlockLocally(); return }
+      }catch{}
+    }
+
     try{
       const r = await fetch("/api/stars/create",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({stars, feature, userId, eventId: feature==="seasonal" ? activeEvent?.id : undefined})})
       const j = await r.json()
       if(!j.invoiceLink){ alert("Ошибка оплаты: "+(j.error||"no link")); return }
       tg.openInvoice(j.invoiceLink, (s: string)=>{
-        if(s==="paid"){
-          if(feature==="deep"||feature==="bundle"){ setDeepUnlocked(true); checkDeep() }
-          if(feature==="hidden"||feature==="bundle"){ setHiddenUnlocked(true); checkHidden() }
-          if(feature==="future"||feature==="bundle"){ setFutureUnlocked(true); checkFuture() }
-          if(feature==="seasonal"){ setSeasonalUnlocked(true); checkSeasonal() }
-          if(feature==="custom"){ setCustomUnlocked(true) } // ждём вопрос от юзера, не дёргаем checkCustom() сразу
-        }
+        if(s==="paid") unlockLocally()
       })
     }catch(e:any){ alert(e.message) }
   }
@@ -317,11 +457,21 @@ export default function Page(){
     setLoad(true)
     try{
       const salt = Date.now() + "_" + Math.random().toString(36).slice(2)
-      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"short", salt, mode})})
+      const newScanId = (crypto as any)?.randomUUID ? crypto.randomUUID() : salt
+      const r=await fetch("/api/love",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photo1:p1,photo2:p2, type:"short", salt, mode, mood:todayMood})})
       const d=await r.json()
       if(r.status===429) return alert(d.error)
       setRes(d as any)
+      setScanId(newScanId)
       setSimilarItems(null) // сбрасываем "у других" от прошлого скана
+      setViewingHistoryScan(false)
+
+      // новый скан = новая пара фото = ВСЁ платное снова заблюрено, даже если
+      // предыдущий скан этого же юзера был куплен целиком бандлом
+      setDeepUnlocked(false); setDeepOpened(false); setDeepRes(""); setDeepExtra("")
+      setHiddenUnlocked(false); setHiddenOpened(false); setHiddenRes("")
+      setFutureUnlocked(false); setFutureOpened(false); setFutureRes("")
+      setCustomUnlocked(false); setCustomOpened(false); setCustomRes(""); setCustomQuestion("")
 
       // анонимный отрывок в общий пул для "у кого был похожий %" — без userId,
       // без фото, только % и короткий кусок уже показанного юзеру текста
@@ -330,7 +480,9 @@ export default function Page(){
       }
 
       if(myUserId){
-        fetch("/api/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:myUserId, percent:d.percent, full:d.full, mode})}).catch(()=>{})
+        // персистентная карточка скана — фундамент новой системы разблокировок,
+        // заменяет старый /api/history (тот теперь не используется, можно удалить)
+        fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scanId:newScanId, userId:myUserId, mode, percent:d.percent, full:d.full})}).catch(()=>{})
 
         if(referrerId && !refCredited){
           setRefCredited(true)
@@ -519,11 +671,33 @@ export default function Page(){
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {isFounder && <div className="icon-btn" title="Founder" style={{width:34,height:34,borderRadius:"50%",background:`${gold}22`,border:`1px solid ${gold}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>👑</div>}
             <button onClick={openLeaderboard} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>🏆</button>
+            <button onClick={()=>setWheelOpen(true)} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:wheelSpunToday?"rgba(255,255,255,0.06)":`${gold}22`,border:`1px solid ${wheelSpunToday?"rgba(255,255,255,0.1)":gold+"55"}`,cursor:"pointer",fontSize:14,position:"relative"}}>
+              🎡
+              {!wheelSpunToday && <span style={{position:"absolute",top:-1,right:-1,width:8,height:8,borderRadius:"50%",background:red}}/>}
+            </button>
             <button onClick={openHistory} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"white",fontSize:14}}>📜</button>
             <button onClick={toggleNotify} className="icon-btn" style={{width:34,height:34,borderRadius:"50%",background:notifyOn?`${gold}22`:"rgba(255,255,255,0.06)",border:`1px solid ${notifyOn?gold+"55":"rgba(255,255,255,0.1)"}`,cursor:"pointer",fontSize:14,opacity:notifyOn?1:0.5}}>🔔</button>
             <div className="seal-idle" style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(150deg, ${red}, ${redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✦</div>
           </div>
         </div>
+
+        {/* ежедневный чек-ин настроения — показывается один раз в день */}
+        {moodLoaded && !todayMood && (
+          <div className="reveal" style={{padding:"0 22px",marginTop:12}}>
+            <div style={{...glass,borderRadius:16,padding:14}}>
+              <p className="mono" style={{fontSize:10,color:gold,textTransform:"uppercase",letterSpacing:"0.08em"}}>✦ Прежде чем начать</p>
+              <p className="serif" style={{fontSize:16,marginTop:5}}>Как ты сегодня?</p>
+              <div style={{marginTop:9,display:"flex",flexWrap:"wrap",gap:7}}>
+                {MOOD_OPTIONS.map(m=>(
+                  <button key={m.id} onClick={()=>saveMood(m.id)} disabled={moodSaving} className="unlock-btn mono" style={{
+                    padding:"7px 12px",borderRadius:14,border:"1px solid rgba(255,255,255,0.1)",
+                    background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.75)",fontSize:11.5,cursor:"pointer",
+                  }}>{m.label}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* сезонный лимитированный ивент */}
         {activeEvent && (
@@ -703,130 +877,178 @@ export default function Page(){
           </div>
         )}
 
-        {/* sealed letters */}
-        <div className="reveal" style={{padding:"0 22px",marginTop:26,animationDelay:".1s"}}>
-          <p className="mono" style={{fontSize:10.5,textTransform:"uppercase",opacity:0.32,letterSpacing:"0.1em"}}>Запечатанные письма</p>
+        {/* sealed letters — карусель вместо плоского списка */}
+        <div className="reveal" style={{marginTop:26,animationDelay:".1s"}}>
+          <p className="mono" style={{padding:"0 22px",fontSize:10.5,textTransform:"uppercase",opacity:0.32,letterSpacing:"0.1em"}}>Запечатанные письма</p>
 
-          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{marginTop:10,display:"flex",gap:10,overflowX:"auto",padding:"2px 22px 6px",scrollSnapType:"x proximity"}} className="carousel-rail">
+            {([
+              { id:"deep" as const,   icon:"🧠", title:"Глубокий разбор", unlocked:deepUnlocked,   price:PRICES.deep },
+              { id:"hidden" as const, icon:"🎭", title:"Что скрывает",    unlocked:hiddenUnlocked, price:PRICES.hidden },
+              { id:"future" as const, icon:"🔮", title:"Будущее",        unlocked:futureUnlocked, price:PRICES.future },
+              { id:"custom" as const, icon:"💌", title:"Свой вопрос",    unlocked:customUnlocked, price:PRICES.custom },
+            ]).map(c=>(
+              <button key={c.id} onClick={()=>setSelectedCard(c.id)} className={c.unlocked?"gold-card":""} style={{
+                scrollSnapAlign:"start",flexShrink:0,width:104,padding:"14px 10px",borderRadius:16,cursor:"pointer",textAlign:"center",
+                ...glass,
+                border: selectedCard===c.id ? `1px solid ${gold}` : (c.unlocked?`1px solid ${gold}55`:glass.border),
+                boxShadow: selectedCard===c.id ? `0 0 0 1px ${gold}55` : "none",
+              }}>
+                <div style={{fontSize:24}}>{c.icon}</div>
+                <div className="serif" style={{fontSize:12.5,marginTop:6,lineHeight:1.15,color:"white"}}>{c.title}</div>
+                <div className="mono" style={{fontSize:10,marginTop:6,color: c.unlocked ? gold : "rgba(255,255,255,0.4)"}}>{c.unlocked ? "Открыто ✓" : `${c.price.now} ✦`}</div>
+              </button>
+            ))}
+          </div>
+
+          <div style={{padding:"0 22px",marginTop:12}}>
 
             {/* deep */}
-            <div className={deepUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:deepUnlocked?`1px solid ${gold}55`:glass.border}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <p className="serif" style={{fontSize:17}}>Глубокий разбор</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Мысли, ред флаги, что делать</p>
+            {selectedCard==="deep" && (
+              <div className={deepUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:deepUnlocked?`1px solid ${gold}55`:glass.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <p className="serif" style={{fontSize:17}}>Глубокий разбор</p>
+                    <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Мысли, ред флаги, что делать</p>
+                  </div>
+                  {!deepUnlocked?
+                    <button onClick={()=>buy(PRICES.deep.now,"deep")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${red}, ${redDeep})`,color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                      <span className="mono strike" style={{fontSize:9.5}}>{PRICES.deep.was} ✦</span>
+                      <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.deep.now} ✦</span>
+                    </button>
+                    : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>}
                 </div>
-                {!deepUnlocked?
-                  <button onClick={()=>buy(PRICES.deep.now,"deep")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${red}, ${redDeep})`,color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
-                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.deep.was} ✦</span>
-                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.deep.now} ✦</span>
-                  </button>
-                  : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>}
+                {!deepUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.deep}</p>}
+
+                {deepUnlocked && !deepOpened && (
+                  <EnvelopeReveal onOpen={()=>{ setDeepOpened(true); checkDeep() }} />
+                )}
+
+                {deepUnlocked && deepOpened && (
+                  <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
+                    {!viewingHistoryScan && <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder="Расскажи что между вами..." className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>}
+                    {!viewingHistoryScan && <button onClick={checkDeep} className="unlock-btn" style={{width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:gold,color:"#221703",fontWeight:700}}><span className="mono" style={{fontSize:12}}>{deepLoad? <>Вскрываю<Dots/></> : (deepRes ? "Пересобрать с деталями" : "Вскрыть письмо")}</span></button>}
+                    {deepLoad && !deepRes && <div style={{borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:70}}/>}
+                    {deepRes && <div className="ai-font" style={{borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{deepRes}</div>}
+                  </div>
+                )}
               </div>
-              {!deepUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.deep}</p>}
+            )}
 
-              {deepUnlocked && !deepOpened && (
-                <EnvelopeReveal onOpen={()=>{ setDeepOpened(true); checkDeep() }} />
-              )}
-
-              {deepUnlocked && deepOpened && (
-                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
-                  <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder="Расскажи что между вами..." className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
-                  <button onClick={checkDeep} className="unlock-btn" style={{width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:gold,color:"#221703",fontWeight:700}}><span className="mono" style={{fontSize:12}}>{deepLoad? <>Вскрываю<Dots/></> : (deepRes ? "Пересобрать с деталями" : "Вскрыть письмо")}</span></button>
-                  {deepLoad && !deepRes && <div style={{borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:70}}/>}
-                  {deepRes && <div className="ai-font" style={{borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{deepRes}</div>}
+            {/* hidden */}
+            {selectedCard==="hidden" && (
+              <div className={hiddenUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:hiddenUnlocked?`1px solid ${gold}55`:glass.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <p className="serif" style={{fontSize:17}}>Что он(а) скрывает</p>
+                    <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Скрытые эмоции по языку тела</p>
+                  </div>
+                  {!hiddenUnlocked?
+                    <button onClick={()=>buy(PRICES.hidden.now,"hidden")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                      <span className="mono strike" style={{fontSize:9.5}}>{PRICES.hidden.was} ✦</span>
+                      <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.hidden.now} ✦</span>
+                    </button>
+                    : (hiddenLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
                 </div>
-              )}
-            </div>
+                {!hiddenUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.hidden}</p>}
 
-            {/* hidden — replaces the old 18+ feature; works for couple/crush/friend alike */}
-            <div className={hiddenUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:hiddenUnlocked?`1px solid ${gold}55`:glass.border}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <p className="serif" style={{fontSize:17}}>Что он(а) скрывает</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Скрытые эмоции по языку тела</p>
-                </div>
-                {!hiddenUnlocked?
-                  <button onClick={()=>buy(PRICES.hidden.now,"hidden")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
-                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.hidden.was} ✦</span>
-                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.hidden.now} ✦</span>
-                  </button>
-                  : (hiddenLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
+                {hiddenUnlocked && !hiddenOpened && (
+                  <EnvelopeReveal onOpen={()=>{ setHiddenOpened(true); checkHidden() }} />
+                )}
+
+                {hiddenUnlocked && hiddenOpened && hiddenLoad && !hiddenRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
+                {hiddenUnlocked && hiddenOpened && hiddenRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{hiddenRes}</div>}
               </div>
-              {!hiddenUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.hidden}</p>}
-
-              {hiddenUnlocked && !hiddenOpened && (
-                <EnvelopeReveal onOpen={()=>{ setHiddenOpened(true); checkHidden() }} />
-              )}
-
-              {hiddenUnlocked && hiddenOpened && hiddenLoad && !hiddenRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
-              {hiddenUnlocked && hiddenOpened && hiddenRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{hiddenRes}</div>}
-            </div>
+            )}
 
             {/* future */}
-            <div className={futureUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:futureUnlocked?`1px solid ${gold}55`:glass.border}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <p className="serif" style={{fontSize:17}}>{mode==="friend" ? "Будущее · дружба" : "Будущее · Свадьба?"}</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>{mode==="friend" ? "Останетесь ли близки" : "Расстанетесь или вместе"}</p>
+            {selectedCard==="future" && (
+              <div className={futureUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:futureUnlocked?`1px solid ${gold}55`:glass.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <p className="serif" style={{fontSize:17}}>{mode==="friend" ? "Будущее · дружба" : "Будущее · Свадьба?"}</p>
+                    <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>{mode==="friend" ? "Останетесь ли близки" : "Расстанетесь или вместе"}</p>
+                  </div>
+                  {!futureUnlocked?
+                    <button onClick={()=>buy(PRICES.future.now,"future")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                      <span className="mono strike" style={{fontSize:9.5}}>{PRICES.future.was} ✦</span>
+                      <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.future.now} ✦</span>
+                    </button>
+                    : (futureLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
                 </div>
-                {!futureUnlocked?
-                  <button onClick={()=>buy(PRICES.future.now,"future")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.08)",color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
-                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.future.was} ✦</span>
-                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.future.now} ✦</span>
-                  </button>
-                  : (futureLoad ? <span className="mono" style={{fontSize:11}}><Dots/></span> : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>)}
+                {!futureUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.future}</p>}
+
+                {futureUnlocked && !futureOpened && (
+                  <EnvelopeReveal onOpen={()=>{ setFutureOpened(true); checkFuture() }} />
+                )}
+
+                {futureUnlocked && futureOpened && futureLoad && !futureRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
+                {futureUnlocked && futureOpened && futureRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{futureRes}</div>}
               </div>
-              {!futureUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>{DECOY_TEASERS.future}</p>}
+            )}
 
-              {futureUnlocked && !futureOpened && (
-                <EnvelopeReveal onOpen={()=>{ setFutureOpened(true); checkFuture() }} />
-              )}
-
-              {futureUnlocked && futureOpened && futureLoad && !futureRes && <div style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:60}}/>}
-              {futureUnlocked && futureOpened && futureRes && <div className="ai-font" style={{marginTop:12,borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{futureRes}</div>}
-            </div>
-
-            {/* custom — "спроси что угодно", свой вопрос вместо готовой категории */}
-            <div className={customUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:customUnlocked?`1px solid ${gold}55`:glass.border}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <p className="serif" style={{fontSize:17}}>Спроси что угодно</p>
-                  <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Свой вопрос про эту пару</p>
+            {/* custom */}
+            {selectedCard==="custom" && (
+              <div className={customUnlocked?"gold-card":""} style={{...glass,borderRadius:18,padding:16,border:customUnlocked?`1px solid ${gold}55`:glass.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <p className="serif" style={{fontSize:17}}>Спроси что угодно</p>
+                    <p className="mono" style={{fontSize:10.5,opacity:0.45,marginTop:2}}>Свой вопрос про эту пару</p>
+                  </div>
+                  {!customUnlocked?
+                    <button onClick={()=>buy(PRICES.custom.now,"custom")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${red}, ${redDeep})`,color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
+                      {hasFreeCustomCredit ? (
+                        <span className="mono" style={{fontSize:11,fontWeight:700}}>🎁 Бесплатно</span>
+                      ) : <>
+                        <span className="mono strike" style={{fontSize:9.5}}>{PRICES.custom.was} ✦</span>
+                        <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.custom.now} ✦</span>
+                      </>}
+                    </button>
+                    : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>}
                 </div>
-                {!customUnlocked?
-                  <button onClick={()=>buy(PRICES.custom.now,"custom")} className="unlock-btn" style={{height:36,padding:"0 14px",borderRadius:16,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${red}, ${redDeep})`,color:"white",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1.1}}>
-                    <span className="mono strike" style={{fontSize:9.5}}>{PRICES.custom.was} ✦</span>
-                    <span className="mono" style={{fontSize:12,fontWeight:700}}>{PRICES.custom.now} ✦</span>
-                  </button>
-                  : <span className="mono shimmer-price" style={{fontSize:11,fontWeight:600}}>Открыто</span>}
+                {!customUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>...стоит спросить прямо то, что действительно не даёт покоя — не общими словами, а ровно то, что волнует именно тебя, и получить ответ без уклонений и шаблонных фраз, которые ничего на самом деле не...</p>}
+
+                {customUnlocked && !customOpened && (
+                  <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                        <p className="mono" style={{fontSize:9.5,opacity:0.4,textTransform:"uppercase",letterSpacing:"0.06em"}}>Можно спросить так</p>
+                        <button onClick={()=>setChipSeed(s=>s+1)} className="mono" style={{fontSize:9.5,opacity:0.45,background:"none",border:"none",cursor:"pointer",color:gold}}>🔄 другие</button>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        {pickQuestions(mode,chipSeed).map((q,i)=>(
+                          <button key={i} onClick={()=>setCustomQuestion(q)} className="unlock-btn mono" style={{
+                            textAlign:"left",padding:"8px 12px",borderRadius:10,cursor:"pointer",fontSize:12,
+                            background: customQuestion===q ? `${gold}1f` : "rgba(255,255,255,0.04)",
+                            border: customQuestion===q ? `1px solid ${gold}77` : "1px solid rgba(255,255,255,0.08)",
+                            color:"rgba(255,255,255,0.8)",
+                          }}>"{q}"</button>
+                        ))}
+                      </div>
+                    </div>
+                    <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Или напиши свой вопрос..." className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
+                    <button onClick={()=>{ setCustomOpened(true); checkCustom() }} disabled={!customQuestion.trim()} className="unlock-btn" style={{width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:gold,color:"#221703",fontWeight:700,opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:12}}>Задать вопрос</span></button>
+                  </div>
+                )}
+
+                {customUnlocked && customOpened && (
+                  <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
+                    {customLoad && !customRes && <div style={{borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:70}}/>}
+                    {customRes && <div className="ai-font" style={{borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{customRes}</div>}
+                    {customRes && !viewingHistoryScan && (
+                      <>
+                        <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Задай ещё один вопрос..." className="mono letter-area" style={{width:"100%",minHeight:50,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
+                        <button onClick={checkCustom} disabled={!customQuestion.trim()||customLoad} className="unlock-btn" style={{width:"100%",height:36,borderRadius:18,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.1)",color:"white",opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:11.5}}>{customLoad? <>Спрашиваю<Dots/></> : "Спросить ещё раз"}</span></button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              {!customUnlocked && <p className="ai-font teaser-blur" style={{marginTop:10,fontSize:13.5}}>...стоит спросить прямо то, что действительно не даёт покоя — не общими словами, а ровно то, что волнует именно тебя, и получить ответ без уклонений и шаблонных фраз, которые ничего на самом деле не...</p>}
-
-              {customUnlocked && !customOpened && (
-                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
-                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Например: поженимся ли мы? стоит ли ждать? он(а) вообще думает обо мне?" className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
-                  <button onClick={()=>{ setCustomOpened(true); checkCustom() }} disabled={!customQuestion.trim()} className="unlock-btn" style={{width:"100%",height:40,borderRadius:20,border:"none",cursor:"pointer",background:gold,color:"#221703",fontWeight:700,opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:12}}>Задать вопрос</span></button>
-                </div>
-              )}
-
-              {customUnlocked && customOpened && (
-                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:9}}>
-                  {customLoad && !customRes && <div style={{borderRadius:14,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",padding:13,height:70}}/>}
-                  {customRes && <div className="ai-font" style={{borderRadius:14,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",padding:13,fontSize:14,whiteSpace:"pre-wrap"}}>{customRes}</div>}
-                  {customRes && (
-                    <>
-                      <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Задай ещё один вопрос..." className="mono letter-area" style={{width:"100%",minHeight:50,borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",padding:11,fontSize:12.5,color:"#F3EDE3",resize:"vertical"}}/>
-                      <button onClick={checkCustom} disabled={!customQuestion.trim()||customLoad} className="unlock-btn" style={{width:"100%",height:36,borderRadius:18,border:"none",cursor:"pointer",background:"rgba(255,255,255,0.1)",color:"white",opacity:customQuestion.trim()?1:0.5}}><span className="mono" style={{fontSize:11.5}}>{customLoad? <>Спрашиваю<Dots/></> : "Спросить ещё раз"}</span></button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+            )}
 
             {!(deepUnlocked && hiddenUnlocked && futureUnlocked) && (
               <button onClick={()=>buy(PRICES.bundle.now,"bundle")} className="bundle-pulse unlock-btn" style={{
-                marginTop:4,width:"100%",height:58,borderRadius:18,border:`1px solid ${gold}55`,cursor:"pointer",
+                marginTop:12,width:"100%",height:58,borderRadius:18,border:`1px solid ${gold}55`,cursor:"pointer",
                 background:`linear-gradient(135deg, ${gold}, #F3D998)`,color:"#221703",
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
               }}>
@@ -842,6 +1064,44 @@ export default function Page(){
         </div>
       </div>
 
+      {/* wheel of fortune modal */}
+      {wheelOpen && (
+        <div className="drawer-backdrop" onClick={()=>setWheelOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"center",padding:22}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:340,maxWidth:"100%",...glass,background:"#0F0D0C",borderRadius:24,padding:26,textAlign:"center"}}>
+            <p className="serif" style={{fontSize:22}}>Колесо дня</p>
+            <p className="mono" style={{fontSize:10.5,opacity:0.4,marginTop:4}}>Один раз в сутки · бесплатно</p>
+
+            <div style={{margin:"26px auto",width:120,height:120,position:"relative"}}>
+              <div style={{
+                width:120,height:120,borderRadius:"50%",
+                background:`conic-gradient(${red}, ${gold}, ${redDeep}, ${gold}, ${red})`,
+                animation: wheelSpinning ? "spin 1.4s cubic-bezier(.2,.8,.3,1)" : "none",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                boxShadow:"0 10px 30px rgba(0,0,0,0.5)",
+              }}>
+                <div style={{width:70,height:70,borderRadius:"50%",background:"#0F0D0C",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>🎡</div>
+              </div>
+              <style>{`@keyframes spin{ from{transform:rotate(0deg)} to{transform:rotate(1080deg)} }`}</style>
+            </div>
+
+            {wheelPrize ? (
+              <div className="reveal">
+                <p className="ai-font" style={{fontSize:15,padding:"0 6px"}}>{wheelPrize.label}</p>
+                <p className="mono" style={{fontSize:10,opacity:0.4,marginTop:10}}>Возвращайся завтра за новым призом</p>
+              </div>
+            ) : (
+              <button onClick={spinWheel} disabled={wheelSpinning} className="unlock-btn mono" style={{
+                width:"100%",height:46,borderRadius:23,border:"none",cursor:"pointer",
+                background:`linear-gradient(135deg, ${gold}, #F3D998)`,color:"#221703",fontWeight:700,fontSize:13,
+                opacity:wheelSpinning?0.7:1,
+              }}>{wheelSpinning? <>Крутим<Dots/></> : "Крутить колесо"}</button>
+            )}
+
+            <button onClick={()=>setWheelOpen(false)} className="mono" style={{marginTop:16,background:"none",border:"none",color:"rgba(255,255,255,0.35)",fontSize:11,cursor:"pointer"}}>Закрыть</button>
+          </div>
+        </div>
+      )}
+
       {/* history drawer */}
       {historyOpen && (
         <div className="drawer-backdrop" onClick={()=>setHistoryOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"flex-end"}}>
@@ -852,15 +1112,19 @@ export default function Page(){
             </div>
             {historyLoading && <p className="mono" style={{fontSize:12,opacity:0.5}}>Загружаю<Dots/></p>}
             {!historyLoading && historyItems.length===0 && <p className="mono" style={{fontSize:12,opacity:0.4}}>Пока пусто — сделай первый скан</p>}
-            {!historyLoading && historyItems.map(item=>(
-              <div key={item.id} style={{borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"12px 0"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span className="serif" style={{fontSize:16,color:gold}}>{item.percent}%</span>
-                  <span className="mono" style={{fontSize:9.5,opacity:0.4}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+            {!historyLoading && historyItems.map(item=>{
+              const unlockedCount = Object.values(item.unlocked||{}).filter(Boolean).length
+              return (
+                <div key={item.scanId} onClick={()=>openHistoryScan(item.scanId)} style={{borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"12px 0",cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span className="serif" style={{fontSize:16,color:gold}}>{item.percent}%</span>
+                    <span className="mono" style={{fontSize:9.5,opacity:0.4}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+                  </div>
+                  <p className="ai-font" style={{fontSize:12.5,marginTop:4,opacity:0.75}}>{item.snippet}…</p>
+                  {unlockedCount>0 && <p className="mono" style={{fontSize:9,opacity:0.4,marginTop:4}}>🔓 открыто разделов: {unlockedCount}</p>}
                 </div>
-                <p className="ai-font" style={{fontSize:12.5,marginTop:4,opacity:0.75}}>{(item.full||"").slice(0,140)}…</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

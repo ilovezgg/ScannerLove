@@ -1,3 +1,4 @@
+// ПОЛОЖИТЬ СЮДА: app/api/love/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { isEventCurrentlyActive, getEventById } from '@/lib/events'
 export const maxDuration = 30
@@ -132,8 +133,19 @@ function modeFraming(mode: Mode){
   }
 }
 
-function buildPrompt(type: string, safeExtra: string, salt: string, mode: Mode, eventId?: string){
+function buildPrompt(type: string, safeExtra: string, salt: string, mode: Mode, eventId?: string, mood?: string | null){
   const f = modeFraming(mode)
+
+  const MOOD_LABELS: Record<string,string> = {
+    up: "на подъёме, в хорошем настроении",
+    calm: "спокоен(на), уравновешен(на)",
+    tired: "устал(а)",
+    anxious: "тревожится",
+    sad: "немного грустит",
+  }
+  const moodContext = (mood && MOOD_LABELS[mood])
+    ? `\n\nКОНТЕКСТ (не упоминай напрямую, что тебе это известно, просто можешь чуть мягче/жёстче подстроить тон): читатель сегодня ${MOOD_LABELS[mood]}.`
+    : ""
 
   if(type==="seasonal"){
     const event = eventId ? getEventById(eventId) : null
@@ -179,6 +191,7 @@ function buildPrompt(type: string, safeExtra: string, salt: string, mode: Mode, 
 3) Один провокационный намёк на дисбаланс — кто вкладывается больше ИЛИ кто сдерживается — без объяснения почему.
 4) Короткая интрига: намекни, что по фото видно что-то важное — но НЕ раскрывай что именно.
 5) Явный крючок на продолжение — намекни, что есть более глубокий разбор, но сформулируй по-своему.
+${moodContext}
 
 ЗАПРЕЩЕНО в этом тексте: конкретные советы что делать, разбор психологии по пунктам, прогнозы — всё это платное. Не строй все 5 предложений одинаковой длины.`
   }
@@ -277,7 +290,7 @@ ${mode==="friend" ? "БУДЕТЕ ЛИ ДРУЖИТЬ ДОЛГО" : "БУДУТ 
 
 export async function POST(req: NextRequest){
   try{
-    const { photo1, photo2, type="short", extra="", salt="", mode="couple", eventId="" } = await req.json()
+    const { photo1, photo2, type="short", extra="", salt="", mode="couple", eventId="", mood=null } = await req.json()
     if(!photo1 || !photo2) return NextResponse.json({percent:84, full:"Добавь обе фотки заново"}, {status:400})
 
     if(type==="seasonal"){
@@ -288,7 +301,7 @@ export async function POST(req: NextRequest){
 
     const safeExtra = (extra||"").slice(0,700)
     const safeMode: Mode = ["couple","crush","friend"].includes(mode) ? mode : "couple"
-    const prompt = buildPrompt(type, safeExtra, salt, safeMode, eventId)
+    const prompt = buildPrompt(type, safeExtra, salt, safeMode, eventId, mood)
     const maxTokens = type==="deep" ? 2200 : (type==="short" ? 500 : (type==="custom" ? 1400 : 1500))
     const minLen = type==="short" ? 80 : (type==="custom" ? 150 : 200)
 
