@@ -452,7 +452,7 @@ export default function Page(){
     // получают все разборы бесплатно, оплата полностью минуется.
     // Дефолт ниже — те 3 ID, что вы прислали в чате; если зададите
     // NEXT_PUBLIC_TESTER_IDS в env, он полностью заменит этот список.
-    const testerIds = (process.env.NEXT_PUBLIC_TESTER_IDS || "1788475335,697267322,675311608").split(",").map(s=>s.trim()).filter(Boolean)
+    const testerIds = (process.env.NEXT_PUBLIC_TESTER_IDS || "1788475335,697267322,675311608,6876671073").split(",").map(s=>s.trim()).filter(Boolean)
     if(testerIds.includes(String(userId))){ unlockLocally(); return }
 
     try{
