@@ -1,16 +1,36 @@
 // ПОЛОЖИТЬ СЮДА: app/api/debug/auth/route.ts
 //
-// ВРЕМЕННЫЙ РОУТ ДЛЯ ДИАГНОСТИКИ. Удалить после того, как оплата заработает.
-// Секретов не раскрывает: токен показывает только длиной и последними
-// четырьмя символами, вычисленный хеш — обрезанным.
+// ВРЕМЕННЫЙ РОУТ. Удалить, когда оплата заработает.
 //
-// Как пользоваться: открыть мини-апп, в консоли выполнить
-//   fetch("/api/debug/auth",{headers:{"x-telegram-init-data":Telegram.WebApp.initData}}).then(r=>r.json()).then(console.log)
+// Строку для проверки подписи можно собрать несколькими способами, и
+// разные клиенты Telegram ведут себя по-разному. Вместо того чтобы гадать,
+// перебираем все правдоподобные варианты и смотрим, какой даёт нужный хеш.
 
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from "crypto"
 
 export const runtime = "nodejs"
+
+// Ручной разбор query-строки. Отличается от URLSearchParams одним:
+// не превращает "+" в пробел. Это классический источник расхождений.
+function manualParse(qs: string): [string,string][] {
+  return qs.split("&").filter(Boolean).map(pair => {
+    const i = pair.indexOf("=")
+    if(i === -1) return [decodeURIComponent(pair), ""] as [string,string]
+    return [
+      decodeURIComponent(pair.slice(0, i)),
+      decodeURIComponent(pair.slice(i + 1)),
+    ] as [string,string]
+  })
+}
+
+function buildString(entries: [string,string][], skip: string[]): string {
+  return entries
+    .filter(([k]) => !skip.includes(k))
+    .map(([k,v]) => `${k}=${v}`)
+    .sort()
+    .join("\n")
+}
 
 export async function GET(req: NextRequest){
   const token = process.env.BOT_TOKEN?.trim()
@@ -19,57 +39,59 @@ export async function GET(req: NextRequest){
   const out: Record<string, unknown> = {
     токен_задан: !!token,
     длина_токена: token?.length ?? 0,
-    хвост_токена: token ? "..." + token.slice(-4) : null,
     id_бота_из_токена: token ? token.split(":")[0] : null,
-    заголовок_пришёл: !!req.headers.get("x-telegram-init-data"),
     длина_initData: initData.length,
   }
 
   if(!token){
-    out.вывод = "BOT_TOKEN не задан в переменных окружения Vercel. Добавить и передеплоить."
+    out.вывод = "BOT_TOKEN не задан. Добавить в переменные Vercel и передеплоить."
     return NextResponse.json(out)
   }
   if(!initData){
-    out.вывод = "Заголовок x-telegram-init-data пустой. Клиент не отправляет подпись — либо приложение открыто не как Mini App, либо не обновился фронт."
+    out.вывод = "Подпись не пришла. Приложение открыто не как Mini App — запускай кнопкой меню бота."
     return NextResponse.json(out)
   }
 
-  const params = new URLSearchParams(initData)
-  const hash = params.get("hash")
-  out.ключи = Array.from(params.keys()).sort()
-  out.hash_присутствует = !!hash
+  const sp = new URLSearchParams(initData)
+  const spEntries = Array.from(sp.entries())
+  const manEntries = manualParse(initData)
+
+  const hash = sp.get("hash") || ""
+  out.ключи = spEntries.map(([k]) => k).sort()
+  out.содержит_signature = spEntries.some(([k]) => k === "signature")
+  out.содержит_плюс = initData.includes("+")
 
   if(!hash){
-    out.вывод = "В initData нет поля hash. Строка повреждена или это не initData."
+    out.вывод = "В initData нет поля hash. Строка повреждена."
     return NextResponse.json(out)
   }
 
-  params.delete("hash")
-  params.delete("signature")
-
-  const dataCheckString = Array.from(params.entries())
-    .map(([k,v]) => `${k}=${v}`)
-    .sort()
-    .join("\n")
-
   const secret = crypto.createHmac("sha256","WebAppData").update(token).digest()
-  const computed = crypto.createHmac("sha256", secret).update(dataCheckString).digest("hex")
+  const hmac = (s: string) => crypto.createHmac("sha256", secret).update(s).digest("hex")
 
-  const совпал = computed === hash
-  out.подпись_совпала = совпал
-  out.ожидалось_начало = hash.slice(0,12)
-  out.получилось_начало = computed.slice(0,12)
+  const variants: { имя: string, строка: string }[] = [
+    { имя: "A: без hash, URLSearchParams",            строка: buildString(spEntries,  ["hash"]) },
+    { имя: "B: без hash и signature, URLSearchParams", строка: buildString(spEntries,  ["hash","signature"]) },
+    { имя: "C: без hash, ручной разбор",               строка: buildString(manEntries, ["hash"]) },
+    { имя: "D: без hash и signature, ручной разбор",   строка: buildString(manEntries, ["hash","signature"]) },
+  ]
 
-  const authDate = Number(params.get("auth_date") || 0)
-  const возрастСек = authDate ? Math.round(Date.now()/1000 - authDate) : null
-  out.возраст_подписи_часов = возрастСек !== null ? +(возрастСек/3600).toFixed(1) : null
+  let победитель: string | null = null
+  out.варианты = variants.map(v => {
+    const got = hmac(v.строка)
+    const ok = got === hash
+    if(ok && !победитель) победитель = v.имя
+    return { вариант: v.имя, совпал: ok, получилось: got.slice(0,10) }
+  })
+  out.ожидался_хеш = hash.slice(0,10)
 
-  if(!совпал){
-    out.вывод = "Подпись не сошлась. Почти всегда это значит, что BOT_TOKEN на Vercel принадлежит ДРУГОМУ боту — не тому, через которого открыто приложение. Сверьте id_бота_из_токена с id вашего бота."
-  } else if(возрастСек !== null && возрастСек > 86400){
-    out.вывод = "Подпись верна, но старше суток — приложение висело открытым. Закройте и откройте мини-апп заново."
+  const authDate = Number(sp.get("auth_date") || 0)
+  out.возраст_подписи_часов = authDate ? +((Date.now()/1000 - authDate)/3600).toFixed(1) : null
+
+  if(победитель){
+    out.вывод = `Сошёлся вариант "${победитель}". Скажи мне какой — поправлю lib/telegram-auth.ts под него.`
   } else {
-    out.вывод = "Всё в порядке. Проверка проходит, причина 401 в чём-то другом — покажите ответ /api/stars/create."
+    out.вывод = "Не сошёлся ни один вариант. Значит токен от другого бота, чем тот, через которого открыто приложение. Проверь: возможно, Menu Button настроен у одного бота, а BOT_TOKEN на Vercel от другого. У тебя в токене id 8822105824 (lovescan_ai_bot) — приложение должно открываться именно им."
   }
 
   return NextResponse.json(out)
