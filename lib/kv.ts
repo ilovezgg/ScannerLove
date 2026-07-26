@@ -1,15 +1,9 @@
 // ПОЛОЖИТЬ СЮДА: lib/kv.ts
 //
-// Единая точка доступа к хранилищу для всех новых фич (пуши, рефералка, история).
-// Пытается использовать @vercel/kv, если он настроен (KV_REST_API_URL/KV_REST_API_TOKEN
-// в env — это Upstash Redis под капотом, подключается через Vercel Storage за 2 клика).
-// Если не настроен — падает в in-memory Map, чтобы локально можно было тестировать
-// без БД. In-memory вариант НЕ переживёт рестарт serverless-функции в проде — это
-// только для локальной разработки, для прода обязательно подключите настоящий KV.
-//
-// Если у вас уже есть своя БД (Postgres/Supabase/Mongo) для check-paid/stars —
-// просто перепишите функции ниже под неё, сигнатуры (get/set/incr/sadd/smembers)
-// должны остаться теми же, чтобы остальной код не трогать.
+// Единая точка доступа к хранилищу. Пытается использовать @vercel/kv, если он
+// настроен (KV_REST_API_URL/KV_REST_API_TOKEN), иначе падает в in-memory Map
+// для локальной разработки. In-memory вариант НЕ переживёт рестарт
+// serverless-функции — в проде обязателен настоящий KV.
 
 type Json = any
 
@@ -51,7 +45,35 @@ export async function kvIncr(key: string): Promise<number>{
   return next
 }
 
-// sets — used for "list of all subscribed userIds" etc.
+// НОВОЕ. Атомарный декремент — нужен для списания кредитов.
+//
+// Раньше кредиты списывались связкой kvGet → проверка → kvSet. Между чтением
+// и записью успевает вклиниться второй запрос: два быстрых тапа по кнопке при
+// одном кредите на счету открывали два разбора. incr/decr на стороне Redis
+// выполняются целиком, поэтому гонки нет.
+export async function kvDecr(key: string): Promise<number>{
+  if(hasVercelKV){
+    const kv = await vercelKv()
+    return await kv.decr(key)
+  }
+  const cur = (memStore.get(key) as number) || 0
+  const next = cur - 1
+  memStore.set(key, next)
+  return next
+}
+
+// Списать один кредит. Возвращает остаток, либо null, если списывать нечего.
+// Уходит в минус только внутри себя: если счётчик был пуст, значение сразу
+// возвращается обратно.
+export async function kvSpendOne(key: string): Promise<number | null>{
+  const left = await kvDecr(key)
+  if(left < 0){
+    await kvIncr(key)
+    return null
+  }
+  return left
+}
+
 export async function kvSadd(key: string, member: string){
   if(hasVercelKV){
     const kv = await vercelKv()
@@ -79,12 +101,10 @@ export async function kvSmembers(key: string): Promise<string[]>{
   return Array.from(memSets.get(key) || [])
 }
 
-// lists — used for scan history (most recent first, capped)
-// ВАЖНО: @vercel/kv УЖЕ сам сериализует/десериализует значения в JSON под
-// капотом. Раньше здесь стоял ручной JSON.stringify/parse поверх этого —
-// двойная упаковка, из-за которой чтение падало с ошибкой парсинга и список
-// (например история сканов) тихо возвращался пустым. Больше не трогаем
-// сериализацию руками — передаём значения как есть.
+// lists — история сканов, свежие сверху, с ограничением по длине.
+// ВАЖНО: @vercel/kv сам сериализует значения в JSON. Ручной
+// JSON.stringify/parse поверх этого давал двойную упаковку, из-за которой
+// чтение падало и список тихо возвращался пустым. Сериализацию не трогаем.
 export async function kvListPush(key: string, value: Json, cap = 50){
   if(hasVercelKV){
     const kv = await vercelKv()

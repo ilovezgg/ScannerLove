@@ -508,12 +508,15 @@ export default function Page(){
     tg.ready()
 
     // Бесплатный кредит с колеса — оплату минуем целиком.
+    // Списание и разблокировка происходят одним запросом на сервере:
+    // раньше клиент звал сначала /api/custom-credit/use, потом unlock,
+    // и кредит уходил дважды.
     if(feature==="custom" && hasFreeCustomCredit && scanId){
-      const { data } = await post("/api/custom-credit/use",{ userId:myUserId })
-      if(data.ok){
-        const r = await post("/api/scan/unlock",{ scanId, feature:"custom", source:"credit" })
-        if(r.data?.ok){ setHasFreeCustomCredit(false); applyUnlock("custom"); return }
-      }
+      const { data } = await post("/api/scan/unlock",{ scanId, feature:"custom", source:"credit" })
+      if(data?.ok){ setHasFreeCustomCredit(false); applyUnlock("custom"); return }
+      alert("Бесплатный разбор уже использован")
+      setHasFreeCustomCredit(false)
+      return
     }
 
     const needsScan = feature!=="sub" && feature!=="conversation" && feature!=="seasonal"
@@ -555,14 +558,19 @@ export default function Page(){
     }catch(e:any){ setWaiting(null); alert(e.message) }
   }
 
+  // Один запрос: сервер сам списывает кредит и открывает разбор. Если
+  // запись не сохранится, кредит вернётся на место — на клиенте об этом
+  // думать не нужно.
   const useReferralCredit = async (feature: Feature = "deep") => {
     if(!myUserId || refCredits<=0 || !scanId) return
-    const { data } = await post("/api/invite/use-credit",{ userId:myUserId })
-    if(!data.ok) return
-    setRefCredits(data.remaining ?? refCredits-1)
-    const r = await post("/api/scan/unlock",{ scanId, feature, source:"referral" })
-    if(r.data?.ok) applyUnlock(feature)
-    else alert("Кредит списан, но разблокировка не прошла. Напиши в поддержку — вернём.")
+    const { data } = await post("/api/scan/unlock",{ scanId, feature, source:"referral" })
+    if(data?.ok){
+      setRefCredits(data.remaining ?? refCredits-1)
+      applyUnlock(feature)
+    } else {
+      alert("Бесплатных разборов не осталось")
+      setRefCredits(0)
+    }
   }
 
   /* ── скан ── */
