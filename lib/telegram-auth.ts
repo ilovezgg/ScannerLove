@@ -112,7 +112,7 @@ export function authUser(req: Request): TgUser | null {
 
 // Аварийный обход для локальной разработки вне Telegram.
 // Работает ТОЛЬКО когда NODE_ENV !== production и задан DEV_FAKE_USER_ID.
-[26.07.2026 8:57] mathematical: export function authUserOrDev(req: Request): TgUser | null {
+ export function authUserOrDev(req: Request): TgUser | null {
   const real = authUser(req)
   if (real) return real
   if (process.env.NODE_ENV !== "production" && process.env.DEV_FAKE_USER_ID) {
