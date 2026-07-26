@@ -1,10 +1,12 @@
 "use client"
 // ПОЛОЖИТЬ СЮДА: app/page.tsx
 import { useState, useEffect, useRef } from "react"
-import DebugPanel from "./debug-panel"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 import { getActiveEvent } from "@/lib/events"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
+// ВРЕМЕННО: панель диагностики. Удалить эту строку и <DebugPanel/> ниже,
+// когда оплата заработает.
+import DebugPanel from "./debug-panel"
 
 /* ────────────────────────────────────────────────────────────
    ДИЗАЙН-ТОКЕНЫ
@@ -773,7 +775,6 @@ export default function Page(){
   const Dots = () => <span className="loader-dots"><span>·</span><span>·</span><span>·</span></span>
   const Rule = ({children,right}:{children:React.ReactNode,right?:React.ReactNode}) => (
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-      <DebugPanel/>
       <p className="mono" style={label}>{children}</p>
       <div style={{flex:1,height:1,background:C.lineSoft}}/>
       {right}
@@ -897,6 +898,9 @@ export default function Page(){
       <div className="blob" style={{position:"absolute",bottom:-160,right:-120,width:380,height:380,borderRadius:"50%",background:`radial-gradient(circle, ${C.gold}2b, transparent 70%)`,filter:"blur(72px)",pointerEvents:"none",animationDelay:"5s"}}/>
 
       <div style={{width:420,maxWidth:"100%",minHeight:"100vh",display:"flex",flexDirection:"column",position:"relative",zIndex:1,padding:`0 0 calc(32px + env(safe-area-inset-bottom))`}}>
+
+        {/* ВРЕМЕННО: диагностика. Удалить вместе с импортом выше. */}
+        <DebugPanel />
 
         <div style={{padding:`${PAD}px ${PAD}px 0`}}><InviteBanner onJoin={setInviteSessionId} /></div>
 
