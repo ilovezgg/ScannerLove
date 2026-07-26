@@ -38,7 +38,21 @@ export default function DebugPanel(){
       const r = await fetch("/api/debug/auth",{
         headers:{ "x-telegram-init-data": tg?.initData || "" }
       })
-      setServer(await r.json())
+      // Читаем как текст, а не сразу r.json(): если роут не задеплоился,
+      // Next отдаёт HTML-страницу 404, и JSON.parse падает с невнятным
+      // «string did not match the expected pattern» вместо кода ошибки.
+      const raw = await r.text()
+      try{
+        setServer({ "код ответа": r.status, ...JSON.parse(raw) })
+      }catch{
+        setServer({
+          "код ответа": r.status,
+          "ответ не JSON": raw.slice(0,200),
+          "вывод": r.status === 404
+            ? "Роут /api/debug/auth не найден. Проверь, что файл лежит по пути app/api/debug/auth/route.ts и попал в коммит."
+            : "Сервер вернул не JSON — смотри логи функции на Vercel.",
+        })
+      }
     }catch(e){
       setServer({ ошибка: String(e) })
     }
