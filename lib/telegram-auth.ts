@@ -1,4 +1,4 @@
-[26.07.2026 8:57] mathematical: // ПОЛОЖИТЬ СЮДА: lib/telegram-auth.ts
+ // ПОЛОЖИТЬ СЮДА: lib/telegram-auth.ts
 //
 // Проверка подлинности Telegram initData.
 //
