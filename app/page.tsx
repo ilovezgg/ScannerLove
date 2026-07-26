@@ -1,6 +1,7 @@
 "use client"
 // ПОЛОЖИТЬ СЮДА: app/page.tsx
 import { useState, useEffect, useRef } from "react"
+import DebugPanel from "./debug-panel"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 import { getActiveEvent } from "@/lib/events"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
@@ -772,6 +773,7 @@ export default function Page(){
   const Dots = () => <span className="loader-dots"><span>·</span><span>·</span><span>·</span></span>
   const Rule = ({children,right}:{children:React.ReactNode,right?:React.ReactNode}) => (
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+      <DebugPanel/>
       <p className="mono" style={label}>{children}</p>
       <div style={{flex:1,height:1,background:C.lineSoft}}/>
       {right}
