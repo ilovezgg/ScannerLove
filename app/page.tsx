@@ -852,7 +852,7 @@ export default function Page(){
   )
 
   return (
-    <div style={{minHeight:"100vh",width:"100%",display:"flex",justifyContent:"center",background:C.bg,color:C.ink,position:"relative",overflow:"hidden",fontFamily:"'JetBrains Mono', monospace"}}>
+    <div style={{minHeight:"100dvh",width:"100%",display:"flex",justifyContent:"center",background:C.bg,color:C.ink,position:"relative",fontFamily:"'JetBrains Mono', monospace"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@1,6..72,300;1,6..72,400&display=swap');
         *{ box-sizing:border-box }
