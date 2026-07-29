@@ -4,9 +4,6 @@ import { useState, useEffect, useRef } from "react"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 import { getActiveEvent } from "@/lib/events"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
-// ВРЕМЕННО: панель диагностики. Удалить эту строку и <DebugPanel/> ниже,
-// когда оплата заработает.
-
 
 /* ────────────────────────────────────────────────────────────
    ДИЗАЙН-ТОКЕНЫ
@@ -274,14 +271,12 @@ export default function Page(){
   const [subActive,setSubActive]=useState(false)
   const [subUntil,setSubUntil]=useState<number|null>(null)
   const [subCancelled,setSubCancelled]=useState(false)
-  const [subOpen,setSubOpen]=useState(false)
 
   /* ── переписка ── */
   const [chatShots,setChatShots]=useState<string[]>([])
   const [convCredits,setConvCredits]=useState(0)
   const [convLoad,setConvLoad]=useState(false)
   const [convRes,setConvRes]=useState("")
-  const [convOpen,setConvOpen]=useState(false)
 
   const [isFounder,setIsFounder]=useState(false)
   const [leaderboardOpen,setLeaderboardOpen]=useState(false)
@@ -594,7 +589,7 @@ export default function Page(){
       setScanId(newScanId)
       setSimilarItems(null)
       setViewingHistoryScan(false)
-      setTimeout(()=>resultRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),120)
+      setTimeout(()=>resultRef.current?.scrollIntoView({behavior:"auto",block:"start"}),120)
 
       // Новая пара фото — новый скан. Всё платное снова закрыто, кроме
       // подписки: подписчику блокировать нечего.
@@ -799,7 +794,7 @@ export default function Page(){
       <div className="seal-card" style={{position:"relative",width:"100%",height:104,cursor:"pointer",perspective:"1200px",marginTop:12}}
         onClick={()=>{ if(flipping) return; setFlipping(true); playSound("unlock"); haptic("medium"); setTimeout(onOpen,650) }}>
         <div style={{position:"relative",width:"100%",height:"100%",transition:"transform .65s cubic-bezier(.4,.2,.2,1)",transformStyle:"preserve-3d",transform:flipping?"rotateY(180deg)":"rotateY(0deg)"}}>
-          <div style={{position:"absolute",inset:0,borderRadius:R.md,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,backfaceVisibility:"hidden",background:`linear-gradient(135deg, ${C.gold}1c, rgba(255,255,255,0.02))`,border:`1px solid ${C.gold}44`}}>
+          <div style={{position:"absolute",inset:0,borderRadius:R.md,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,overflow:"hidden",backfaceVisibility:"hidden",background:`linear-gradient(135deg, ${C.gold}1c, rgba(255,255,255,0.02))`,border:`1px solid ${C.gold}44`}}>
             <div className="seal" style={{width:38,height:38,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%, ${C.goldSoft}, ${C.gold} 55%, #a3822f)`,display:"flex",alignItems:"center",justifyContent:"center",color:C.goldInk}}><Ico n="spark" s={16}/></div>
             <p className="mono" style={{fontSize:F.xs,color:C.ink50,letterSpacing:"0.06em"}}>Оплачено — нажми, чтобы вскрыть</p>
           </div>
@@ -852,9 +847,8 @@ export default function Page(){
   )
 
   return (
-    <div style={{minHeight:"100dvh",width:"100%",display:"flex",justifyContent:"center",background:C.bg,color:C.ink,position:"relative",fontFamily:"'JetBrains Mono', monospace"}}>
+    <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@1,6..72,300;1,6..72,400&display=swap');
         *{ box-sizing:border-box }
         ::-webkit-scrollbar{ display:none }
         button:focus-visible, textarea:focus-visible, label:focus-visible{ outline:2px solid ${C.gold}; outline-offset:2px }
@@ -894,13 +888,21 @@ export default function Page(){
         @media (prefers-reduced-motion: reduce){ *,*::before,*::after{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important } }
       `}</style>
 
-      <div className="blob" style={{position:"absolute",top:-140,left:-100,width:340,height:340,borderRadius:"50%",background:`radial-gradient(circle, ${C.red}3d, transparent 70%)`,filter:"blur(64px)",pointerEvents:"none"}}/>
-      <div className="blob" style={{position:"absolute",bottom:-160,right:-120,width:380,height:380,borderRadius:"50%",background:`radial-gradient(circle, ${C.gold}2b, transparent 70%)`,filter:"blur(72px)",pointerEvents:"none",animationDelay:"5s"}}/>
+      {/* ФОНОВЫЙ СЛОЙ.
+          Декоративные пятна живут в отдельном фиксированном слое со своей
+          обрезкой. Раньше overflow:hidden стоял на корневом контейнере и
+          отрезал всё, что не влезло в первый экран — из-за этого страница
+          не прокручивалась после появления разбора. */}
+      <div style={{position:"fixed",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:0,background:C.bg}}>
+        <div className="blob" style={{position:"absolute",top:-140,left:-100,width:340,height:340,borderRadius:"50%",background:`radial-gradient(circle, ${C.red}3d, transparent 70%)`,filter:"blur(64px)"}}/>
+        <div className="blob" style={{position:"absolute",bottom:-160,right:-120,width:380,height:380,borderRadius:"50%",background:`radial-gradient(circle, ${C.gold}2b, transparent 70%)`,filter:"blur(72px)",animationDelay:"5s"}}/>
+      </div>
 
-      <div style={{width:420,maxWidth:"100%",minHeight:"100vh",display:"flex",flexDirection:"column",position:"relative",zIndex:1,padding:`0 0 calc(32px + env(safe-area-inset-bottom))`}}>
-
-        {/* ВРЕМЕННО: диагностика. Удалить вместе с импортом выше. */}
-        
+      {/* КОНТЕНТ. Ни ограничений по высоте, ни overflow — прокручивается
+          обычным документом. 100dvh вместо 100vh: на iOS второй не учитывает
+          системные панели, и низ страницы уезжает под них. */}
+      <div style={{position:"relative",zIndex:1,minHeight:"100dvh",width:"100%",display:"flex",justifyContent:"center",color:C.ink,fontFamily:"'JetBrains Mono', monospace"}}>
+        <div style={{width:420,maxWidth:"100%",display:"flex",flexDirection:"column",flex:1,padding:`0 0 calc(32px + env(safe-area-inset-bottom))`}}>
 
         <div style={{padding:`${PAD}px ${PAD}px 0`}}><InviteBanner onJoin={setInviteSessionId} /></div>
 
@@ -1306,6 +1308,7 @@ export default function Page(){
         <div className="reveal" style={{marginTop:"auto",paddingTop:44,textAlign:"center"}}>
           <p className="mono" style={{...label,color:"rgba(244,239,231,0.18)"}}>Love Scanner · Est 2026</p>
         </div>
+        </div>
       </div>
 
       {/* колесо */}
@@ -1401,6 +1404,6 @@ export default function Page(){
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }

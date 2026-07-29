@@ -2,17 +2,6 @@
 
 @import "tailwindcss";
 
-html, body {
-  overflow-x: hidden;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-
-  /* Гасит «оттягивание» страницы: внутри Telegram этот жест
-     перехватывается как закрытие приложения. */
-  overscroll-behavior: none;
-  -webkit-tap-highlight-color: transparent;
-}
 :root {
   --background: #0A0908;
   --foreground: #F4EFE7;
@@ -22,25 +11,29 @@ html, body {
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-
-  /* Раньше здесь стояли --font-geist-sans и --font-geist-mono из шаблона
-     Next.js — их задаёт next/font, которого в layout нет, поэтому
-     переменные были пустыми. Указываем реальные шрифты проекта. */
   --font-sans: 'Instrument Serif', Georgia, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   --font-serif: 'Newsreader', Georgia, serif;
 }
 
+html {
+  background: var(--background);
+}
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-
-  /* Гасит «оттягивание» страницы: внутри Telegram этот жест
-     перехватывается как закрытие приложения. */
-  overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
+
+  /* overflow-x: hidden убран намеренно. На iOS он в паре с html делает
+     тело страницы отдельным контейнером прокрутки, и вертикальная
+     прокрутка перестаёт работать. Декоративные пятна теперь обрезаются
+     своим фиксированным слоем в page.tsx, поэтому здесь ничего резать
+     не нужно. */
+
+  /* overscroll-behavior тоже убран: он гасил не только «оттягивание»
+     страницы, но на части версий iOS ломал инерционную прокрутку. */
 }
 
 /* Текст разборов люди копируют — например, готовую фразу для сообщения,
