@@ -6,7 +6,7 @@ import { getActiveEvent } from "@/lib/events"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
 // ВРЕМЕННО: панель диагностики. Удалить эту строку и <DebugPanel/> ниже,
 // когда оплата заработает.
-import DebugPanel from "./debug-panel"
+
 
 /* ────────────────────────────────────────────────────────────
    ДИЗАЙН-ТОКЕНЫ
@@ -799,7 +799,7 @@ export default function Page(){
       <div className="seal-card" style={{position:"relative",width:"100%",height:104,cursor:"pointer",perspective:"1200px",marginTop:12}}
         onClick={()=>{ if(flipping) return; setFlipping(true); playSound("unlock"); haptic("medium"); setTimeout(onOpen,650) }}>
         <div style={{position:"relative",width:"100%",height:"100%",transition:"transform .65s cubic-bezier(.4,.2,.2,1)",transformStyle:"preserve-3d",transform:flipping?"rotateY(180deg)":"rotateY(0deg)"}}>
-          <div style={{position:"absolute",inset:0,borderRadius:R.md,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,overflow:"hidden",backfaceVisibility:"hidden",background:`linear-gradient(135deg, ${C.gold}1c, rgba(255,255,255,0.02))`,border:`1px solid ${C.gold}44`}}>
+          <div style={{position:"absolute",inset:0,borderRadius:R.md,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,backfaceVisibility:"hidden",background:`linear-gradient(135deg, ${C.gold}1c, rgba(255,255,255,0.02))`,border:`1px solid ${C.gold}44`}}>
             <div className="seal" style={{width:38,height:38,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%, ${C.goldSoft}, ${C.gold} 55%, #a3822f)`,display:"flex",alignItems:"center",justifyContent:"center",color:C.goldInk}}><Ico n="spark" s={16}/></div>
             <p className="mono" style={{fontSize:F.xs,color:C.ink50,letterSpacing:"0.06em"}}>Оплачено — нажми, чтобы вскрыть</p>
           </div>
@@ -900,7 +900,7 @@ export default function Page(){
       <div style={{width:420,maxWidth:"100%",minHeight:"100vh",display:"flex",flexDirection:"column",position:"relative",zIndex:1,padding:`0 0 calc(32px + env(safe-area-inset-bottom))`}}>
 
         {/* ВРЕМЕННО: диагностика. Удалить вместе с импортом выше. */}
-        <DebugPanel />
+        
 
         <div style={{padding:`${PAD}px ${PAD}px 0`}}><InviteBanner onJoin={setInviteSessionId} /></div>
 
