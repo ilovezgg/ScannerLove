@@ -776,7 +776,7 @@ export default function Page(){
     </div>
   )
   const AnswerBox = ({text}:{text:string}) => (
-    <div className="ai-font" style={{marginTop:12,borderRadius:R.sm,background:"rgba(255,255,255,0.045)",border:`1px solid ${C.line}`,borderLeft:`2px solid ${C.gold}66`,padding:14,fontSize:F.md,whiteSpace:"pre-wrap",color:C.ink}}>{text}</div>
+    <div className="ai-font" style={{marginTop:12,borderRadius:R.sm,background:"rgba(255,255,255,0.045)",border:`1px solid ${C.line}`,borderLeft:`2px solid ${C.gold}66`,padding:14,fontSize:F.md,whiteSpace:"pre-wrap",overflowWrap:"anywhere",color:C.ink}}>{text}</div>
   )
   const Skeleton = ({h=64}:{h?:number}) => <div className="skeleton" style={{marginTop:12,borderRadius:R.sm,height:h,border:`1px solid ${C.line}`}}/>
 
@@ -854,7 +854,7 @@ export default function Page(){
         button:focus-visible, textarea:focus-visible, label:focus-visible{ outline:2px solid ${C.gold}; outline-offset:2px }
         .serif{ font-family:'Instrument Serif',serif; font-weight:400 }
         .mono{ font-family:'JetBrains Mono',monospace }
-        .ai-font{ font-family:'Newsreader',serif; font-style:italic; font-weight:300; line-height:1.72 }
+        .ai-font{ font-family:'Newsreader',serif; font-style:italic; font-weight:300; line-height:1.72; overflow-wrap:anywhere }
         @keyframes fadeUp{ from{opacity:0; transform:translateY(14px)} to{opacity:1; transform:translateY(0)} }
         @keyframes drift{ 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(20px,-14px) scale(1.06)} }
         @keyframes sealPulse{ 0%,100%{box-shadow:0 0 0 0 rgba(193,39,45,.4)} 50%{box-shadow:0 0 0 9px rgba(193,39,45,0)} }
@@ -1102,7 +1102,7 @@ export default function Page(){
               {selectedCard==="deep" && unlocked.deep && opened.deep && (
                 <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
                   {!viewingHistoryScan && <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder="Что между вами происходит? Пара фраз сделает разбор точнее." className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>}
-                  {!viewingHistoryScan && <button onClick={()=>{tapFx();generate("deep")}} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700}}><span className="mono" style={{fontSize:F.sm}}>{busy.deep ? <>Вскрываю<Dots/></> : (results.deep ? "Пересобрать с деталями" : "Вскрыть письмо")}</span></button>}
+                  {!viewingHistoryScan && <button onClick={()=>{tapFx();generate("deep")}} disabled={busy.deep} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700}}><span className="mono" style={{fontSize:F.sm}}>{busy.deep ? <>Вскрываю<Dots/></> : (results.deep ? "Пересобрать с деталями" : "Вскрыть письмо")}</span></button>}
                   {busy.deep && !results.deep && <Skeleton h={78}/>}
                   {results.deep && <AnswerBox text={results.deep}/>}
                 </div>
@@ -1127,7 +1127,7 @@ export default function Page(){
                     ))}
                   </div>
                   <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Или напиши свой вопрос" className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
-                  <button onClick={()=>{tapFx();setOpened(o=>({...o,custom:true}));generate("custom")}} disabled={!customQuestion.trim()} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>Задать вопрос</span></button>
+                  <button onClick={()=>{tapFx();setOpened(o=>({...o,custom:true}));generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>Задать вопрос</span></button>
                 </div>
               )}
               {selectedCard==="custom" && unlocked.custom && opened.custom && (

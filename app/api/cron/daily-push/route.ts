@@ -20,9 +20,9 @@ export async function GET(req: NextRequest){
     return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   }
 
-  const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim()
+  const botToken = process.env.BOT_TOKEN?.trim()
   const botUsername = process.env.TELEGRAM_BOT_USERNAME?.trim() // без @, например love_scanner_bot
-  if(!botToken) return NextResponse.json({ error: "no TELEGRAM_BOT_TOKEN" }, { status: 500 })
+  if(!botToken) return NextResponse.json({ error: "no BOT_TOKEN" }, { status: 500 })
 
   const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)]
   const subscribers = await kvSmembers("push:subscribers")
