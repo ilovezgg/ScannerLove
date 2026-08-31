@@ -144,12 +144,11 @@ export function InvitePartnerButton({ result }: { result: ScanResult }) {
 
   const handleInvite = async () => {
     setLoading(true)
-    const userId = getTelegramUserId()
     try {
       const res = await fetch("/api/invite/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, result }),
+        headers: { "Content-Type": "application/json", "x-telegram-init-data": getTelegramInitData() },
+        body: JSON.stringify({ result }),
       })
       const data = await res.json()
       if (data.link) setLink(data.link)

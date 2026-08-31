@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kvGet } from '@/lib/kv'
+import { authUserOrDev } from '@/lib/telegram-auth'
+
+export const runtime = "nodejs"
 
 const INVITES_PER_REWARD = 3
 
 export async function GET(req: NextRequest){
-  const userId = req.nextUrl.searchParams.get("userId")
-  if(!userId) return NextResponse.json({ error: "no userId" }, { status: 400 })
+  const user = authUserOrDev(req)
+  if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+  const userId = user.id
 
   const count = (await kvGet<number>(`ref:count:${userId}`)) || 0
   const credits = (await kvGet<number>(`ref:credits:${userId}`)) || 0

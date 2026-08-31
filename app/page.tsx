@@ -319,7 +319,7 @@ export default function Page(){
 
     post("/api/register-user",{userId,optIn:true,name:tg?.initDataUnsafe?.user?.first_name}).catch(()=>{})
 
-    apiJson(`/api/invite/status?userId=${userId}`).then(({data:j})=>{
+    apiJson(`/api/invite/status`).then(({data:j})=>{
       if(typeof j.count==="number") setRefCount(j.count)
       if(typeof j.credits==="number") setRefCredits(j.credits)
       if(typeof j.toNextReward==="number") setRefToNext(j.toNextReward)
@@ -340,7 +340,7 @@ export default function Page(){
       setWheelSpunToday(!!j.spunToday); if(j.prize) setWheelPrize(j.prize)
     }).catch(()=>{})
 
-    apiJson(`/api/custom-credit/use?userId=${userId}`).then(({data:j})=>setHasFreeCustomCredit(!!j.hasCredit)).catch(()=>{})
+    apiJson(`/api/custom-credit/use`).then(({data:j})=>setHasFreeCustomCredit(!!j.hasCredit)).catch(()=>{})
   },[])
 
   const refreshSubscription = async () => {
