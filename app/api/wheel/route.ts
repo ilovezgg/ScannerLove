@@ -1,6 +1,9 @@
 // ПОЛОЖИТЬ СЮДА: app/api/wheel/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { kvGet, kvSet, kvIncr } from '@/lib/kv'
+import { authUserOrDev } from '@/lib/telegram-auth'
+
+export const runtime = "nodejs"
 
 function todayKey(){
   return new Date().toISOString().slice(0,10)
@@ -31,17 +34,18 @@ function pickPrize(){
 
 // GET ?userId= — уже крутил(а) сегодня? Отдаёт прошлый приз, если да.
 export async function GET(req: NextRequest){
-  const userId = req.nextUrl.searchParams.get("userId")
-  if(!userId) return NextResponse.json({ error: "no userId" }, { status: 400 })
-  const spun = await kvGet<{ prizeId: string, label: string }>(`wheel:${userId}:${todayKey()}`)
+  const user = authUserOrDev(req)
+  if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+  const spun = await kvGet<{ prizeId: string, label: string }>(`wheel:${user.id}:${todayKey()}`)
   return NextResponse.json({ spunToday: !!spun, prize: spun || null })
 }
 
-// POST { userId } — крутит колесо один раз в сутки, применяет эффект приза
+// POST — крутит колесо один раз в сутки, применяет эффект приза
 export async function POST(req: NextRequest){
   try{
-    const { userId } = await req.json()
-    if(!userId) return NextResponse.json({ error: "no userId" }, { status: 400 })
+    const user = authUserOrDev(req)
+    if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+    const userId = user.id
 
     const key = `wheel:${userId}:${todayKey()}`
     const already = await kvGet<{ prizeId: string, label: string }>(key)

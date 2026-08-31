@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kvSet, kvSadd, kvSrem, kvSmembers } from '@/lib/kv'
+import { authUserOrDev } from '@/lib/telegram-auth'
 
-// POST { userId, optIn } — call this once when the mini app boots (we already
-// read tg.initDataUnsafe.user.id on mount, just also send it here), and again
+export const runtime = "nodejs"
+
+// POST { optIn } — call this once when the mini app boots, and again
 // whenever the user flips the notification-bell toggle.
 export async function POST(req: NextRequest){
   try{
-    const { userId, optIn = true } = await req.json()
-    if(!userId) return NextResponse.json({ error: "no userId" }, { status: 400 })
+    const user = authUserOrDev(req)
+    if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+    const userId = user.id
+
+    const { optIn = true } = await req.json()
 
     await kvSet(`user:${userId}:seen`, Date.now())
     if(optIn){
@@ -22,8 +27,8 @@ export async function POST(req: NextRequest){
 }
 
 export async function GET(req: NextRequest){
-  const userId = req.nextUrl.searchParams.get("userId")
-  if(!userId) return NextResponse.json({ error: "no userId" }, { status: 400 })
+  const user = authUserOrDev(req)
+  if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   const subs = await kvSmembers("push:subscribers")
-  return NextResponse.json({ optIn: subs.includes(String(userId)) })
+  return NextResponse.json({ optIn: subs.includes(String(user.id)) })
 }

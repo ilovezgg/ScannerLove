@@ -1,14 +1,21 @@
 import { NextRequest } from 'next/server'
 import { Redis } from "@upstash/redis"
+import { authUserOrDev } from '@/lib/telegram-auth'
+
+export const runtime = "nodejs"
 
 const redis = Redis.fromEnv()
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  const { sessionId, userId, result } = body
+  const user = authUserOrDev(req)
+  if (!user) return Response.json({ error: "unauthorized" }, { status: 401 })
+  const userId = user.id
 
-  if (!sessionId || !userId) {
-    return Response.json({ error: "sessionId and userId required" }, { status: 400 })
+  const body = await req.json()
+  const { sessionId, result } = body
+
+  if (!sessionId) {
+    return Response.json({ error: "sessionId required" }, { status: 400 })
   }
 
   const raw = await redis.get<string | object>(`invite:${sessionId}`)

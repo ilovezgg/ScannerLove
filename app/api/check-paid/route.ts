@@ -1,5 +1,8 @@
 import { Redis } from "@upstash/redis"
 import { NextRequest } from "next/server"
+import { authUserOrDev } from '@/lib/telegram-auth'
+
+export const runtime = "nodejs"
 
 const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
@@ -7,9 +10,10 @@ const redis = new Redis({
 })
 
 export async function GET(req: NextRequest){
-  const userId = req.nextUrl.searchParams.get("userId")
+  const user = authUserOrDev(req)
+  if(!user) return Response.json({paid:false},{status:401})
   const feature = req.nextUrl.searchParams.get("feature")
-  if(!userId || !feature) return Response.json({paid:false})
-  const paid = await redis.get(`paid:${userId}:${feature}`)
+  if(!feature) return Response.json({paid:false})
+  const paid = await redis.get(`paid:${user.id}:${feature}`)
   return Response.json({ paid: !!paid })
 }

@@ -39,6 +39,12 @@ function getTelegramUserId(): string | number | null {
   return tg?.initDataUnsafe?.user?.id ?? null
 }
 
+function getTelegramInitData(): string {
+  // @ts-ignore
+  const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null
+  return tg?.initData || ""
+}
+
 // Надёжное копирование в буфер: сначала пробуем нормальный Clipboard API,
 // если он недоступен/падает (частый случай внутри Telegram WebView) —
 // откатываемся на старый textarea + execCommand("copy").
@@ -363,8 +369,8 @@ export function ComparisonScreen({
 
     fetch("/api/invite/join", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, userId, result: myResult }),
+      headers: { "Content-Type": "application/json", "x-telegram-init-data": getTelegramInitData() },
+      body: JSON.stringify({ sessionId, result: myResult }),
     })
       .then((r) => r.json())
       .then((data) => {
