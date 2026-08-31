@@ -388,13 +388,16 @@ ${mode==="friend" ? "БУДЕТЕ ЛИ ДРУЖИТЬ ДОЛГО" : "БУДУТ 
 const PAID_TYPES: PaidFeature[] = ["deep","hidden","future","custom","conversation"]
 
 export async function POST(req: NextRequest){
+  // Вынесено из try, чтобы catch знал, платный это тип или бесплатный тизер —
+  // заглушку можно отдавать только для "short".
+  let type = "short"
   try{
     const body = await req.json()
+    type = body?.type || "short"
     const {
       photo1, photo2,                 // старый формат, оставлен для совместимости
       photos: photosRaw,              // новый: массив кадров
       input: inputRaw = "two",
-      type = "short",
       extra = "",
       salt = "",
       mode = "couple",
@@ -486,10 +489,14 @@ export async function POST(req: NextRequest){
     console.error("ALL FAILED", e)
     // Заглушка отдаётся только для бесплатного тизера. Отдавать выдуманный
     // текст за деньги — прямой путь к возвратам, поэтому на платных типах
-    // честно сообщаем об ошибке и не списываем ничего повторно.
-    return NextResponse.json({
-      percent: 84,
-      full: "Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту — деньги за это не списываются.",
-    }, { status: 503 })
+    // честно сообщаем об ошибке и не отдаём поле full вообще — клиент не должен
+    // иметь возможность спутать эту ошибку с настоящим разбором.
+    if(type === "short"){
+      return NextResponse.json({
+        percent: 84,
+        full: "Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту — деньги за это не списываются.",
+      }, { status: 503 })
+    }
+    return NextResponse.json({ error: "Сервис перегружен, попробуй ещё раз через минуту" }, { status: 503 })
   }
 }

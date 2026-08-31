@@ -428,7 +428,9 @@ export default function Page(){
       })
       if(status===402){
         setResults(r=>({...r,[feature]:"Оплата ещё не подтвердилась. Подожди пару секунд и нажми ещё раз."}))
-      } else if(!data.full){
+      } else if(status!==200 || !data.full){
+        // Не сохраняем через /api/scan/result — не подменяем настоящий платный
+        // разбор заглушкой. Повторный тап бесплатен: фича уже открыта на сервере.
         setResults(r=>({...r,[feature]:"Не получилось собрать разбор. Попробуй ещё раз — повторно платить не нужно."}))
       } else {
         setResults(r=>({...r,[feature]:data.full}))
