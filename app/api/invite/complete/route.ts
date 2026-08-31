@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kvGet, kvSet, kvIncr, kvSadd } from '@/lib/kv'
+import { authUserOrDev } from '@/lib/telegram-auth'
+
+export const runtime = "nodejs"
 
 const INVITES_PER_REWARD = 3
 
-// POST { referrerId, newUserId } — call this once, right after the INVITED
+// POST { referrerId } — call this once, right after the INVITED
 // user's first successful check() (not on app open!), so a referral only
 // counts once someone actually engaged, not just tapped a link.
+// newUserId приходит НЕ из тела, а из подписанного initData — иначе можно
+// было накрутить себе рефералов бесконечными фейковыми newUserId.
 export async function POST(req: NextRequest){
   try{
-    const { referrerId, newUserId } = await req.json()
-    if(!referrerId || !newUserId) return NextResponse.json({ error: "missing ids" }, { status: 400 })
+    const user = authUserOrDev(req)
+    if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+    const newUserId = user.id
+
+    const { referrerId } = await req.json()
+    if(!referrerId) return NextResponse.json({ error: "missing ids" }, { status: 400 })
     if(String(referrerId) === String(newUserId)) return NextResponse.json({ error: "self-referral" }, { status: 400 })
 
     const creditedKey = `ref:credited:${newUserId}`
