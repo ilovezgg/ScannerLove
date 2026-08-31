@@ -10,13 +10,18 @@ import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
    ──────────────────────────────────────────────────────────── */
 const C = {
   bg:"#0A0908", bgRaised:"#100D0C",
-  ink:"#F4EFE7", ink70:"rgba(244,239,231,0.70)", ink50:"rgba(244,239,231,0.50)", ink35:"rgba(244,239,231,0.35)",
+  ink:"#F4EFE7", ink70:"rgba(244,239,231,0.70)", ink50:"rgba(244,239,231,0.50)",
+  // ink55 — контраст 5.61:1 на bg (AA-порог 4.5:1) для текста, который нужно
+  // читать; ink35 — только для декора/disabled/плейсхолдеров, не для контента.
+  ink55:"rgba(244,239,231,0.55)", ink35:"rgba(244,239,231,0.35)",
   line:"rgba(255,255,255,0.09)", lineSoft:"rgba(255,255,255,0.055)",
   red:"#C1272D", redSoft:"#E14750", redDeep:"#7A1015",
   gold:"#E9C77B", goldSoft:"#F3D998", goldInk:"#221703",
 }
 const R = { sm:12, md:18, lg:24, pill:999 }
-const F = { xs:11, sm:12.5, md:14, lg:16, xl:21, xxl:27, hero:42 }
+// micro и display раньше были голыми числами (9.5, 40) в разных местах —
+// формализовал их в шкале вместо округления, чтобы не менять фактический размер.
+const F = { micro:9.5, xs:11, sm:12.5, md:14, lg:16, xl:21, xxl:27, display:40, hero:42 }
 const PAD = 20
 
 /* ────────────────────────────────────────────────────────────
@@ -27,6 +32,21 @@ const PAD = 20
    ──────────────────────────────────────────────────────────── */
 const tgApp = () => (typeof window !== "undefined" ? (window as any)?.Telegram?.WebApp : null)
 const initData = () => tgApp()?.initData || ""
+
+// Обёртка над Telegram.WebApp.showAlert — он асинхронный (колбэк вызывается
+// после того, как пользователь закроет алерт), поэтому код, который должен
+// выполниться именно после закрытия, передаём как cb, а не пишем следом.
+// Фолбэк на обычный alert() — для локальной разработки вне Telegram, где
+// SDK либо не подгружен, либо showAlert недоступен.
+function notify(text: string, cb?: () => void){
+  const tg = tgApp()
+  if(tg?.showAlert){
+    tg.showAlert(text, () => cb?.())
+  } else {
+    alert(text)
+    cb?.()
+  }
+}
 
 async function api(path: string, opts: RequestInit = {}){
   return fetch(path, {
@@ -504,7 +524,7 @@ export default function Page(){
   /* ── покупка ── */
   const buy = async (feature: Feature|"bundle"|"seasonal"|"conversation"|"sub") => {
     const tg = tgApp()
-    if(!tg){ alert("Открой приложение через бота"); return }
+    if(!tg){ notify("Открой приложение через бота"); return }
     tg.ready()
 
     // Бесплатный кредит с колеса — оплату минуем целиком.
@@ -514,13 +534,12 @@ export default function Page(){
     if(feature==="custom" && hasFreeCustomCredit && scanId){
       const { data } = await post("/api/scan/unlock",{ scanId, feature:"custom", source:"credit" })
       if(data?.ok){ setHasFreeCustomCredit(false); applyUnlock("custom"); return }
-      alert("Бесплатный разбор уже использован")
-      setHasFreeCustomCredit(false)
+      notify("Бесплатный разбор уже использован", ()=>setHasFreeCustomCredit(false))
       return
     }
 
     const needsScan = feature!=="sub" && feature!=="conversation" && feature!=="seasonal"
-    if(needsScan && !scanId){ alert("Сначала сделай скан"); return }
+    if(needsScan && !scanId){ notify("Сначала сделай скан"); return }
 
     setWaiting(feature)
     try{
@@ -529,8 +548,8 @@ export default function Page(){
         scanId: needsScan ? scanId : undefined,
         eventId: feature==="seasonal" ? activeEvent?.id : undefined,
       })
-      if(status===409){ await refreshSubscription(); setWaiting(null); alert("Подписка уже активна"); return }
-      if(!data.invoiceLink){ setWaiting(null); alert("Оплата не открылась: "+(data.error||"нет ссылки")); return }
+      if(status===409){ await refreshSubscription(); setWaiting(null); notify("Подписка уже активна"); return }
+      if(!data.invoiceLink){ setWaiting(null); notify("Оплата не открылась: "+(data.error||"нет ссылки")); return }
 
       tg.openInvoice(data.invoiceLink, async (s: string)=>{
         if(s!=="paid"){ setWaiting(null); return }
@@ -552,10 +571,10 @@ export default function Page(){
 
         const ok = await waitForUnlock(feature)
         if(ok) applyUnlock(feature)
-        else alert("Оплата прошла, но подтверждение задерживается. Открой историю сканов через минуту — разбор будет там.")
+        else notify("Оплата прошла, но подтверждение задерживается. Открой историю сканов через минуту — разбор будет там.")
         setWaiting(null)
       })
-    }catch(e:any){ setWaiting(null); alert(e.message) }
+    }catch(e:any){ setWaiting(null); notify(e.message) }
   }
 
   // Один запрос: сервер сам списывает кредит и открывает разбор. Если
@@ -568,14 +587,13 @@ export default function Page(){
       setRefCredits(data.remaining ?? refCredits-1)
       applyUnlock(feature)
     } else {
-      alert("Бесплатных разборов не осталось")
-      setRefCredits(0)
+      notify("Бесплатных разборов не осталось", ()=>setRefCredits(0))
     }
   }
 
   /* ── скан ── */
   const check = async () => {
-    if(!photosReady) return alert(inputKind==="joint" ? "Добавь совместное фото" : "Нужны оба фото")
+    if(!photosReady) return notify(inputKind==="joint" ? "Добавь совместное фото" : "Нужны оба фото")
     setLoad(true)
     try{
       const salt = Date.now()+"_"+Math.random().toString(36).slice(2)
@@ -584,7 +602,7 @@ export default function Page(){
         photos: photosForScan(), input: effectiveInput(),
         type:"short", salt, mode, mood: todayMood,
       })
-      if(status===429){ setLoad(false); return alert(data.error) }
+      if(status===429){ setLoad(false); return notify(data.error) }
 
       setRes({ percent:data.percent, full:data.full })
       setTeasers(data.teasers || {})
@@ -616,7 +634,7 @@ export default function Page(){
         }
       }
     }catch{
-      alert("Скан не удался. Проверь связь и попробуй ещё раз.")
+      notify("Скан не удался. Проверь связь и попробуй ещё раз.")
     }
     setLoad(false)
   }
@@ -768,7 +786,7 @@ export default function Page(){
     backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
     border:`1px solid ${C.line}`,
   }
-  const label:React.CSSProperties = { fontSize:F.xs, letterSpacing:"0.14em", textTransform:"uppercase", color:C.ink35 }
+  const label:React.CSSProperties = { fontSize:F.xs, letterSpacing:"0.14em", textTransform:"uppercase", color:C.ink55 }
   const Dots = () => <span className="loader-dots"><span>·</span><span>·</span><span>·</span></span>
   const Rule = ({children,right}:{children:React.ReactNode,right?:React.ReactNode}) => (
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -787,7 +805,13 @@ export default function Page(){
   const highChance = res ? res.percent>=75 : false
 
   function IconBtn({on=false,onClick,title,children}:{on?:boolean,onClick:()=>void,title:string,children:React.ReactNode}){
-    return <button onClick={()=>{tapFx();onClick()}} title={title} aria-label={title} className="icon-btn" style={{width:32,height:32,borderRadius:R.pill,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:on?`${C.gold}1f`:"transparent",color:on?C.gold:C.ink50}}>{children}</button>
+    // Хит-зона 44x44 через padding+отрицательный margin — сама иконка и
+    // видимый фон-кружок остаются 32x32, соседние кнопки в шапке не раздвигаются.
+    return (
+      <button onClick={()=>{tapFx();onClick()}} title={title} aria-label={title} className="icon-btn" style={{width:32,height:32,padding:6,margin:-6,boxSizing:"content-box",borderRadius:R.pill,border:"none",cursor:"pointer",background:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <span style={{width:32,height:32,borderRadius:R.pill,display:"flex",alignItems:"center",justifyContent:"center",background:on?`${C.gold}1f`:"transparent",color:on?C.gold:C.ink50}}>{children}</span>
+      </button>
+    )
   }
 
   function EnvelopeReveal({onOpen}:{onOpen:()=>void}){
@@ -837,12 +861,12 @@ export default function Page(){
       <div style={{...glass,borderRadius:R.md,padding:7,border:img?`1px solid ${C.line}`:"1px dashed rgba(255,255,255,0.16)",boxShadow:img?"0 12px 30px rgba(0,0,0,0.4)":"none"}}>
         <div style={{width:"100%",aspectRatio:ratio,borderRadius:R.sm,overflow:"hidden",position:"relative",background:"rgba(255,255,255,0.025)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
           {img ? <SmartImg src={img}/> : <>
-            <span style={{width:30,height:30,borderRadius:"50%",border:`1px solid ${C.line}`,display:"flex",alignItems:"center",justifyContent:"center",color:C.ink35}}><Ico n="plus" s={14}/></span>
-            <span className="mono" style={{fontSize:F.xs,color:C.ink35}}>добавить</span>
+            <span style={{width:30,height:30,borderRadius:"50%",border:`1px solid ${C.line}`,display:"flex",alignItems:"center",justifyContent:"center",color:C.ink55}}><Ico n="plus" s={14}/></span>
+            <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>добавить</span>
           </>}
           {load && img && <div className="scan-sweep"/>}
         </div>
-        <p className="mono" style={{fontSize:F.xs,textAlign:"center",marginTop:8,color:img?C.ink50:C.ink35}}>{lab}</p>
+        <p className="mono" style={{fontSize:F.xs,textAlign:"center",marginTop:8,color:img?C.ink50:C.ink55}}>{lab}</p>
       </div>
       <input type="file" hidden accept="image/*" onChange={e=>{const f=e.target.files?.[0]; if(f) compressPhoto(f).then(onPick)}}/>
     </label>
@@ -937,7 +961,7 @@ export default function Page(){
             {MODES.map(m=>(
               <button key={m.id} onClick={()=>{tapFx();setMode(m.id)}} className="unlock-btn" style={{borderRadius:R.sm-4,padding:"9px 4px",cursor:"pointer",textAlign:"center",border:"none",background:mode===m.id?`linear-gradient(135deg, ${C.red}, ${C.redDeep})`:"transparent",color:mode===m.id?"#fff":C.ink50}}>
                 <div className="serif" style={{fontSize:F.lg}}>{m.label}</div>
-                <div className="mono" style={{fontSize:9.5,opacity:mode===m.id?.75:.6,marginTop:2}}>{m.sub}</div>
+                <div className="mono" style={{fontSize:F.micro,opacity:mode===m.id?.75:.6,marginTop:2}}>{m.sub}</div>
               </button>
             ))}
           </div>
@@ -949,7 +973,7 @@ export default function Page(){
           <Rule>Фото</Rule>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,padding:4,borderRadius:R.sm,...glass,marginBottom:12}}>
             {([["two","По отдельности"],["joint","Вместе"]] as const).map(([k,lab])=>(
-              <button key={k} onClick={()=>{tapFx();setInputKind(k)}} className="unlock-btn mono" style={{borderRadius:R.sm-4,padding:"9px 4px",cursor:"pointer",border:"none",fontSize:F.sm,background:inputKind===k?"rgba(255,255,255,0.09)":"transparent",color:inputKind===k?C.ink:C.ink50}}>{lab}</button>
+              <button key={k} onClick={()=>{tapFx();setInputKind(k)}} className="unlock-btn mono" style={{borderRadius:R.sm-4,padding:"13px 4px",cursor:"pointer",border:"none",fontSize:F.sm,background:inputKind===k?"rgba(255,255,255,0.09)":"transparent",color:inputKind===k?C.ink:C.ink50}}>{lab}</button>
             ))}
           </div>
 
@@ -979,7 +1003,7 @@ export default function Page(){
           ) : (
             <>
               <PhotoSlot img={pJoint} onPick={setPJoint} label="Оба человека в кадре" ratio="16/10"/>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:8,lineHeight:1.5}}>Одно фото, где вы вдвоём. По нему видно дистанцию, касания и то, кто к кому наклонён — этого не видно на отдельных портретах.</p>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,lineHeight:1.5}}>Одно фото, где вы вдвоём. По нему видно дистанцию, касания и то, кто к кому наклонён — этого не видно на отдельных портретах.</p>
             </>
           )}
         </div>
@@ -1012,8 +1036,8 @@ export default function Page(){
                     <circle key={res.percent} className="ring-anim" cx="64" cy="64" r="52" stroke="url(#reportRing)" strokeWidth="7" fill="none" strokeLinecap="round" strokeDasharray={ringLen} strokeDashoffset={ringOffset}/>
                   </svg>
                   <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-                    <span className="serif" style={{fontSize:40,lineHeight:1}}><CountUp key={res.percent} value={res.percent}/>%</span>
-                    <span className="mono" style={{fontSize:9.5,letterSpacing:"0.16em",color:C.ink35,marginTop:2}}>МЭТЧ</span>
+                    <span className="serif" style={{fontSize:F.display,lineHeight:1}}><CountUp key={res.percent} value={res.percent}/>%</span>
+                    <span className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>МЭТЧ</span>
                   </div>
                 </div>
               </div>
@@ -1043,7 +1067,7 @@ export default function Page(){
                       {similarItems.map((s,i)=><div key={i} className="ai-font" style={{fontSize:F.sm,color:C.ink70,borderLeft:`2px solid ${C.gold}55`,paddingLeft:12}}>{s}…</div>)}
                     </div>
                   </div>
-                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:10}}>Пока мало данных с похожим % — загляни позже</p>}
+                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>Пока мало данных с похожим % — загляни позже</p>}
               </div>
             </div>
           </div>
@@ -1062,7 +1086,7 @@ export default function Page(){
                     <Ico n={c.ico} s={18}/>{open && <Ico n="check" s={12}/>}
                   </span>
                   <div className="serif" style={{fontSize:F.lg,marginTop:9,lineHeight:1.1}}>{c.title}</div>
-                  <div className="mono" style={{fontSize:F.xs,marginTop:6,color:open?C.gold:C.ink35}}>{open?"открыто":`${PRICES[c.id].now} ✦`}</div>
+                  <div className="mono" style={{fontSize:F.xs,marginTop:6,color:open?C.gold:C.ink55}}>{open?"открыто":`${PRICES[c.id].now} ✦`}</div>
                 </button>
               )
             })}
@@ -1075,7 +1099,7 @@ export default function Page(){
                   <p className="serif" style={{fontSize:F.xl,lineHeight:1.15}}>{current.title}</p>
                   <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:4}}>{current.sub}</p>
                   {!unlocked[selectedCard] && !(selectedCard==="custom" && hasFreeCustomCredit) && (
-                    <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.ink35}}>
+                    <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.ink55}}>
                       <span className="strike">{PRICES[selectedCard].was} ✦</span> · −{off(PRICES[selectedCard])}%
                     </p>
                   )}
@@ -1084,14 +1108,14 @@ export default function Page(){
                   )}
                 </div>
                 {!unlocked[selectedCard] ? (
-                  <button onClick={()=>{tapFx();buy(selectedCard)}} disabled={waiting===selectedCard || !scanId} className="unlock-btn mono" style={{height:38,padding:"0 16px",borderRadius:R.pill,border:"none",cursor:scanId?"pointer":"not-allowed",background:`linear-gradient(135deg, ${C.red}, ${C.redDeep})`,color:"#fff",fontSize:F.sm,fontWeight:700,whiteSpace:"nowrap",flexShrink:0,opacity:scanId?1:0.45}}>
+                  <button onClick={()=>{tapFx();buy(selectedCard)}} disabled={waiting===selectedCard || !scanId} className="unlock-btn mono" style={{height:44,padding:"0 16px",borderRadius:R.pill,border:"none",cursor:scanId?"pointer":"not-allowed",background:`linear-gradient(135deg, ${C.red}, ${C.redDeep})`,color:"#fff",fontSize:F.sm,fontWeight:700,whiteSpace:"nowrap",flexShrink:0,opacity:scanId?1:0.45}}>
                     {waiting===selectedCard ? <>Жду<Dots/></> : (selectedCard==="custom" && hasFreeCustomCredit ? "Открыть" : `${PRICES[selectedCard].now} ✦`)}
                   </button>
                 ) : <span className="mono shimmer-price" style={{fontSize:F.sm,fontWeight:700,paddingTop:6}}>Открыто</span>}
               </div>
 
               {!scanId && !unlocked[selectedCard] && (
-                <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:10}}>Сначала сделай скан — письма пишутся под конкретные фото</p>
+                <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>Сначала сделай скан — письма пишутся под конкретные фото</p>
               )}
 
               {!unlocked[selectedCard] && scanId && <Teaser feature={selectedCard}/>}
@@ -1184,7 +1208,7 @@ export default function Page(){
               <button onClick={()=>{tapFx();buy("sub")}} disabled={waiting==="sub"} className="unlock-btn mono" style={{marginTop:14,width:"100%",height:46,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>
                 {waiting==="sub" ? <>Оформляю<Dots/></> : `${PRICES.sub.now} ✦ в месяц`}
               </button>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:8,textAlign:"center"}}>Отменить можно в любой момент в Telegram</p>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,textAlign:"center"}}>Отменить можно в любой момент в Telegram</p>
             </div>
           )}
         </div>
@@ -1215,13 +1239,13 @@ export default function Page(){
                   {chatShots.map((s,i)=>(
                     <div key={i} style={{position:"relative",aspectRatio:"3/5",borderRadius:R.sm,overflow:"hidden",border:`1px solid ${C.line}`}}>
                       <img src={s} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top"}}/>
-                      <button onClick={()=>{tapFx();setChatShots(a=>a.filter((_,j)=>j!==i))}} className="icon-btn" style={{position:"absolute",top:5,right:5,width:22,height:22,borderRadius:R.pill,border:"none",background:"rgba(10,9,8,0.75)",color:C.ink,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ico n="close" s={11}/></button>
+                      <button onClick={()=>{tapFx();setChatShots(a=>a.filter((_,j)=>j!==i))}} className="icon-btn" style={{position:"absolute",top:2,right:2,width:44,height:44,borderRadius:R.pill,border:"none",background:"rgba(10,9,8,0.75)",color:C.ink,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ico n="close" s={13}/></button>
                     </div>
                   ))}
                   {chatShots.length<MAX_CHAT_SHOTS && (
-                    <label className="photo-card" style={{cursor:"pointer",aspectRatio:"3/5",borderRadius:R.sm,border:"1px dashed rgba(255,255,255,0.16)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,color:C.ink35}}>
+                    <label className="photo-card" style={{cursor:"pointer",aspectRatio:"3/5",borderRadius:R.sm,border:"1px dashed rgba(255,255,255,0.16)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,color:C.ink55}}>
                       <Ico n="plus" s={16}/>
-                      <span className="mono" style={{fontSize:9.5}}>{chatShots.length}/{MAX_CHAT_SHOTS}</span>
+                      <span className="mono" style={{fontSize:F.micro}}>{chatShots.length}/{MAX_CHAT_SHOTS}</span>
                       <input type="file" hidden accept="image/*" multiple onChange={e=>{ if(e.target.files) addShots(e.target.files) }}/>
                     </label>
                   )}
@@ -1233,7 +1257,7 @@ export default function Page(){
                 {convRes && <AnswerBox text={convRes}/>}
               </div>
             ) : (
-              <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:12,lineHeight:1.5}}>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12,lineHeight:1.5}}>
                 Скриншоты нужны только для разбора — они не сохраняются.
               </p>
             )}
@@ -1294,7 +1318,7 @@ export default function Page(){
                 <p className="mono" style={label}>Письмо дня</p>
                 <div style={{paddingRight:64}}>
                   <h2 className="serif" style={{fontSize:F.xxl,lineHeight:1.05}}>Что между<br/><i>вами на самом деле?</i></h2>
-                  <p className="mono" style={{fontSize:F.xs,marginTop:8,color:C.ink35}}>Нажми на печать</p>
+                  <p className="mono" style={{fontSize:F.xs,marginTop:8,color:C.ink55}}>Нажми на печать</p>
                 </div>
                 <div className="seal" style={{position:"absolute",right:18,top:"50%",transform:"translateY(-50%)",width:50,height:50,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%, ${C.redSoft}, ${C.red} 55%, ${C.redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Ico n="spark" s={20}/></div>
               </div>
@@ -1329,12 +1353,12 @@ export default function Page(){
                 <p className="ai-font" style={{fontSize:F.lg,padding:"0 6px"}}>{wheelPrize.label}</p>
                 {wheelPrize.prizeId==="free_custom" && hasFreeCustomCredit ? (
                   <button onClick={()=>{tapFx();setSelectedCard("custom");setWheelOpen(false)}} className="unlock-btn mono" style={{marginTop:16,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>Забрать приз</button>
-                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:12}}>Возвращайся завтра за новым призом</p>}
+                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12}}>Возвращайся завтра за новым призом</p>}
               </div>
             ) : (
               <button onClick={spinWheel} disabled={wheelSpinning} className="unlock-btn mono" style={{width:"100%",height:46,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm,opacity:wheelSpinning?0.7:1}}>{wheelSpinning ? <>Крутим<Dots/></> : "Крутить колесо"}</button>
             )}
-            <button onClick={()=>setWheelOpen(false)} className="mono unlock-btn" style={{marginTop:16,background:"none",border:"none",color:C.ink35,fontSize:F.xs,cursor:"pointer"}}>Закрыть</button>
+            <button onClick={()=>setWheelOpen(false)} className="mono unlock-btn" style={{marginTop:16,background:"none",border:"none",color:C.ink55,fontSize:F.xs,cursor:"pointer"}}>Закрыть</button>
           </div>
         </div>
       )}
@@ -1361,10 +1385,10 @@ export default function Page(){
                 <div key={item.scanId} onClick={()=>{tapFx();openHistoryScan(item.scanId)}} className="unlock-btn" style={{borderBottom:`1px solid ${C.lineSoft}`,padding:"14px 0",cursor:"pointer"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
                     <span className="serif" style={{fontSize:F.xl,color:C.gold}}>{item.percent}%</span>
-                    <span className="mono" style={{fontSize:F.xs,color:C.ink35}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+                    <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
                   </div>
                   <p className="ai-font" style={{fontSize:F.sm,marginTop:5,color:C.ink70}}>{item.snippet}…</p>
-                  {n>0 && <p className="mono" style={{fontSize:F.xs,color:C.ink35,marginTop:6}}>Открыто разделов: {n}</p>}
+                  {n>0 && <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:6}}>Открыто разделов: {n}</p>}
                 </div>
               )
             })}
@@ -1394,7 +1418,7 @@ export default function Page(){
               return (
                 <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.lineSoft}`,padding:"12px 10px",margin:"0 -10px",borderRadius:R.sm,background:me?`${C.gold}0f`:"transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0}}>
-                    <span className="mono" style={{fontSize:F.sm,width:24,color:i<3?C.gold:C.ink35,fontWeight:i<3?700:400}}>{i+1}</span>
+                    <span className="mono" style={{fontSize:F.sm,width:24,color:i<3?C.gold:C.ink55,fontWeight:i<3?700:400}}>{i+1}</span>
                     <span className="serif" style={{fontSize:F.lg,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{me?" · ты":""}</span>
                     {i<3 && <span style={{color:C.gold,display:"flex"}}><Ico n="crown" s={13}/></span>}
                   </div>

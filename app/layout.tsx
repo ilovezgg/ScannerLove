@@ -19,8 +19,11 @@ export const viewport: Viewport = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // telegram-web-app.js правит атрибуты <html> (цветовую схему и т.п.) до
+  // гидратации React — suppressHydrationWarning убирает ложную ошибку
+  // рассинхронизации разметки, не влияя на остальное дерево.
   return (
-    <html lang="ru">
+    <html lang="ru" suppressHydrationWarning>
       <head>
         {/* Шрифты. Раньше они грузились через @import внутри <style> в
             page.tsx — так браузер узнаёт о них слишком поздно, и первый
