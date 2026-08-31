@@ -75,7 +75,35 @@ function validate(j: any, minLen = 200): LoveResult {
    Вызовы моделей. Раньше сигнатура была жёстко (p1, p2) — теперь
    принимаем массив, потому что кадров может быть от 1 (совместное
    фото) до 5 (скриншоты переписки).
+
+   У каждого вызова свой AbortController на 12с — раньше единственным
+   лимитом был maxDuration=60 на всю функцию, поэтому один зависший
+   провайдер съедал бюджет всех остальных 4 фолбэков в цепочке.
    ───────────────────────────────────────────────────────────── */
+
+const PROVIDER_TIMEOUT_MS = 12_000
+
+async function fetchWithTimeout(label: string, url: string, init: RequestInit){
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
+  const t0 = Date.now()
+  try{
+    const res = await fetch(url, { ...init, signal: controller.signal })
+    // "OK" тут значит "ответ пришёл", а не "результат валиден" — статус
+    // указан рядом, невалидный/ошибочный ответ дальше отсеет вызывающий код.
+    console.log(`MODEL RESPONDED: ${label} in ${Date.now() - t0}ms (status ${res.status})`)
+    return res
+  }catch(e){
+    const ms = Date.now() - t0
+    if((e as Error).name === "AbortError"){
+      throw new Error(`${label} timeout after ${ms}ms`)
+    }
+    console.error(`MODEL FETCH FAIL: ${label} after ${ms}ms:`, (e as Error).message)
+    throw e
+  }finally{
+    clearTimeout(timer)
+  }
+}
 
 async function callGemini(model: string, prompt: string, photos: string[], max: number, minLen = 200){
   const key = process.env.GEMINI_API_KEY?.trim()
@@ -94,7 +122,7 @@ async function callGemini(model: string, prompt: string, photos: string[], max: 
     generationConfig: { temperature: 0.9, maxOutputTokens: max, responseMimeType: "application/json" },
   }
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  const res = await fetchWithTimeout(`gemini/${model}`, `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify(body),
@@ -112,7 +140,7 @@ async function callOR(model: string, prompt: string, photos: string[], max: numb
   if(!key) throw new Error("no OPENROUTER_API_KEY")
   if(!photos.length) throw new Error("no photos")
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions",{
+  const res = await fetchWithTimeout(`openrouter/${model}`, "https://openrouter.ai/api/v1/chat/completions", {
     method:"POST",
     headers:{ "Authorization": `Bearer ${key}`, "Content-Type":"application/json" },
     body: JSON.stringify({
