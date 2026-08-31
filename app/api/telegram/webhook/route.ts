@@ -80,10 +80,15 @@ async function unlockScanFeature(scanId: string, userId: string | number, featur
 }
 
 export async function POST(req: NextRequest){
-  // Проверка, что запрос действительно от Telegram
+  // Проверка, что запрос действительно от Telegram. Раньше при отсутствии
+  // WEBHOOK_SECRET проверка молча отключалась — теперь без секрета вебхук
+  // не работает вообще, а не открыт всем.
   if(WEBHOOK_SECRET){
     const got = req.headers.get("x-telegram-bot-api-secret-token")
     if(got !== WEBHOOK_SECRET) return new Response("forbidden", { status: 403 })
+  } else {
+    console.error("webhook: WEBHOOK_SECRET is not set, rejecting request")
+    return new Response("unauthorized", { status: 401 })
   }
 
   let update: any
