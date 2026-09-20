@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
 import { getActiveEvent } from "@/lib/events"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
+import { appLink, shareLink } from "@/lib/links"
 
 /* ────────────────────────────────────────────────────────────
    ДИЗАЙН-ТОКЕНЫ
@@ -337,7 +338,9 @@ export default function Page(){
     setMyUserId(String(userId))
     tg?.ready?.()
 
-    post("/api/register-user",{userId,optIn:true,name:tg?.initDataUnsafe?.user?.first_name}).catch(()=>{})
+    // optIn не шлём: подписка на письмо дня оформляется через /start бота или колокольчик,
+    // а не молча при каждом запуске.
+    post("/api/register-user",{userId,name:tg?.initDataUnsafe?.user?.first_name}).catch(()=>{})
 
     apiJson(`/api/invite/status`).then(({data:j})=>{
       if(typeof j.count==="number") setRefCount(j.count)
@@ -602,7 +605,12 @@ export default function Page(){
         photos: photosForScan(), input: effectiveInput(),
         type:"short", salt, mode, mood: todayMood,
       })
-      if(status===429){ setLoad(false); return notify(data.error) }
+      // Любой не-200 (лимит, перегрузка, обрыв) — это ошибка, а не результат.
+      // Раньше рисовалось то, что вернул сервер, включая выдуманный процент.
+      if(status!==200 || typeof data?.percent!=="number"){
+        setLoad(false)
+        return notify(data?.error || "Скан не удался. Попробуй ещё раз.")
+      }
 
       setRes({ percent:data.percent, full:data.full })
       setTeasers(data.teasers || {})
@@ -624,13 +632,17 @@ export default function Page(){
       }
 
       if(myUserId){
-        await post("/api/scan",{
+        const saved = await post("/api/scan",{
           scanId:newScanId, mode, input:effectiveInput(),
           percent:data.percent, full:data.full, teasers:data.teasers||undefined,
         })
+        // Не сохранился скан — оплата письма потом не найдёт его (webhook кидает «scan not found»).
+        // Лучше сказать сразу, чем брать деньги за то, что не откроется.
+        if(saved.status!==200) notify("Скан не сохранился, покупки для него пока недоступны. Попробуй просканировать ещё раз.")
         if(referrerId && !refCredited){
-          setRefCredited(true)
-          post("/api/invite/complete",{referrerId, newUserId:myUserId}).catch(()=>{})
+          post("/api/invite/complete",{referrerId})
+            .then(r=>{ if(r.status===200) setRefCredited(true) })   // при сбое повторим на следующем скане
+            .catch(()=>{})
         }
       }
     }catch{
@@ -763,21 +775,50 @@ export default function Page(){
       ctx.fillStyle="rgba(244,239,231,0.35)"; ctx.font="24px 'JetBrains Mono', monospace"
       ctx.fillText("проверь свою → @lovescan_ai_bot", 540, 1240)
 
+      // Ссылка ведёт в приложение и несёт ref_<мой id>: человек, пришедший по ней, засчитается мне.
+      // Раньше делились одной картинкой без ссылки, и вирусность была нулевой.
+      const link = myUserId ? appLink(`ref_${myUserId}`) : appLink()
+      const shareText = `Наша совместимость ${res.percent}% 💘 Проверь свою: ${link}`
+
       canvas.toBlob(async (blob)=>{
         if(!blob){ setSharing(false); return }
         const file=new File([blob],"love-scanner.png",{type:"image/png"})
         const nav=navigator as any
         try{
           if(nav.canShare && nav.canShare({files:[file]})){
-            await nav.share({files:[file],title:"Love Scanner",text:`Совместимость ${res.percent}%`})
+            await nav.share({files:[file],title:"Love Scanner",text:shareText})
             setSharing(false); return
           }
         }catch{}
+        // В Telegram Desktop и части вебвью файлы через Web Share не уходят. Скачанный png
+        // там никому не нужен, поэтому шлём в чат текст со ссылкой.
+        const tg = tgApp()
+        if(tg?.openTelegramLink){
+          tg.openTelegramLink(shareLink(link, `Наша совместимость ${res.percent}% 💘 Проверь свою`))
+          setSharing(false); return
+        }
         const url=URL.createObjectURL(blob)
         const a=document.createElement("a"); a.href=url; a.download="love-scanner.png"; a.click()
         URL.revokeObjectURL(url); setSharing(false)
       },"image/png")
     }catch{ setSharing(false) }
+  }
+
+  // Сторис: Telegram принимает публичный URL картинки и ссылку-виджет. Метод есть с Bot API 7.8,
+  // поэтому кнопка показывается только там, где он реально доступен.
+  const canShareStory = () => {
+    const tg = tgApp()
+    return !!(tg?.shareToStory && tg?.isVersionAtLeast?.("7.8"))
+  }
+  const shareStory = () => {
+    if(!res) return
+    const tg = tgApp()
+    if(!canShareStory()) return
+    const link = myUserId ? appLink(`ref_${myUserId}`) : appLink()
+    const media = `${window.location.origin}/api/og?p=${res.percent}&m=${mode}&l=ru&f=story`
+    try{
+      tg.shareToStory(media, { text: `Наша совместимость ${res.percent}% 💘`, widget_link: { url: link, name: "Проверить свою" } })
+    }catch{ notify("Не получилось открыть сторис. Попробуй обычное «Поделиться».") }
   }
 
   /* ── стили ── */
@@ -935,7 +976,7 @@ export default function Page(){
         {/* шапка */}
         <div className="reveal" style={{padding:`22px ${PAD}px 0`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <p className="mono" style={label}>Архив №17</p>
+            <p className="mono" style={label}>Совместимость по фото</p>
             <div style={{display:"flex",alignItems:"center",gap:2,padding:3,borderRadius:R.pill,...glass}}>
               {(isFounder || subActive) && (
                 <div title={subActive?"Подписка активна":"Founder"} style={{width:32,height:32,borderRadius:R.pill,display:"flex",alignItems:"center",justifyContent:"center",color:C.gold,background:`${C.gold}1f`}}><Ico n="crown" s={15}/></div>
@@ -951,8 +992,41 @@ export default function Page(){
             </div>
           </div>
           <h1 className="serif" style={{fontSize:F.hero,lineHeight:0.94,marginTop:14,letterSpacing:"-0.01em"}}>Love<br/><i>Scanner</i></h1>
-          <p className="ai-font" style={{fontSize:F.lg,color:C.ink50,marginTop:8}}>Читаем по фото и переписке</p>
+          <p className="ai-font" style={{fontSize:F.lg,color:C.ink70,marginTop:8}}>Загрузи два фото, и за 10 секунд узнаешь процент совместимости и что между вами.</p>
+          {!res && (
+            <>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:16}}>
+                {[["1","Выбери, кто на фото"],["2","Добавь фото"],["3","Получи процент и разбор"]].map(([n,t])=>(
+                  <div key={n} style={{padding:"10px 8px",borderRadius:R.sm,...glass,textAlign:"center"}}>
+                    <div className="serif" style={{fontSize:F.xl,color:C.gold,lineHeight:1}}>{n}</div>
+                    <div className="mono" style={{fontSize:F.micro,color:C.ink55,marginTop:6,lineHeight:1.35}}>{t}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12,lineHeight:1.5}}>
+                Это развлечение, а не диагноз. Фото уходят на разбор нейросети, подробности в <a href="/privacy" style={{color:C.ink70,textDecoration:"underline"}}>политике конфиденциальности</a>.
+              </p>
+            </>
+          )}
         </div>
+
+        {/* Пример результата: человек видит, что получит, ДО того как грузить два своих фото.
+            Помечен как пример, чтобы не выдавать за настоящий скан. */}
+        {!res && !p1 && !p2 && !pJoint && (
+          <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:22,animationDelay:".03s"}}>
+            <Rule>Пример разбора</Rule>
+            <div style={{...glass,borderRadius:R.md,padding:16,display:"flex",gap:14,alignItems:"center"}}>
+              <div style={{flexShrink:0,textAlign:"center"}}>
+                <span className="serif" style={{fontSize:F.display,lineHeight:1,color:C.red}}>87%</span>
+                <div className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>МЭТЧ</div>
+              </div>
+              <p className="ai-font" style={{fontSize:F.md,color:C.ink70,lineHeight:1.45}}>
+                «Вы оба слегка наклонены друг к другу, а на совместном кадре плечи почти касаются. Это редкий признак, что рядом с человеком спокойно…»
+                <span className="mono" style={{display:"block",fontSize:F.micro,color:C.ink35,marginTop:6}}>Пример, не настоящий скан</span>
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* режим */}
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:26,animationDelay:".05s"}}>
@@ -1053,6 +1127,11 @@ export default function Page(){
                   <button onClick={()=>{tapFx();shareResult()}} disabled={sharing} className="unlock-btn mono" style={{height:38,padding:"0 15px",borderRadius:R.pill,border:`1px solid ${C.line}`,background:"rgba(255,255,255,0.06)",color:C.ink,fontSize:F.sm,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
                     {sharing ? <>Собираю картинку<Dots/></> : <><Ico n="share" s={14}/> Поделиться</>}
                   </button>
+                  {canShareStory() && (
+                    <button onClick={()=>{tapFx();shareStory()}} className="unlock-btn mono" style={{height:38,padding:"0 15px",borderRadius:R.pill,border:`1px solid ${C.line}`,background:"rgba(255,255,255,0.06)",color:C.ink,fontSize:F.sm,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+                      <Ico n="spark" s={14}/> В сторис
+                    </button>
+                  )}
                   <InvitePartnerButton result={res} />
                 </div>
 
@@ -1098,7 +1177,8 @@ export default function Page(){
                 <div style={{minWidth:0}}>
                   <p className="serif" style={{fontSize:F.xl,lineHeight:1.15}}>{current.title}</p>
                   <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:4}}>{current.sub}</p>
-                  {!unlocked[selectedCard] && !(selectedCard==="custom" && hasFreeCustomCredit) && (
+                  {/* Зачёркнутая цена только там, где скидка настоящая (сейчас таких одиночных писем нет) */}
+                  {!unlocked[selectedCard] && !(selectedCard==="custom" && hasFreeCustomCredit) && off(PRICES[selectedCard])>0 && (
                     <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.ink55}}>
                       <span className="strike">{PRICES[selectedCard].was} ✦</span> · −{off(PRICES[selectedCard])}%
                     </p>
@@ -1172,7 +1252,7 @@ export default function Page(){
               <button onClick={()=>{tapFx();buy("bundle")}} disabled={waiting==="bundle"} className="unlock-btn" style={{marginTop:10,width:"100%",padding:"14px 18px",borderRadius:R.md,border:`1px solid ${C.gold}55`,cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}18, rgba(255,255,255,0.02))`,color:C.ink,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,textAlign:"left"}}>
                 <span>
                   <span className="serif" style={{fontSize:F.xl,display:"block",lineHeight:1.1}}>Все три письма</span>
-                  <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:4}}><span className="strike">{PRICES.bundle.was} ✦</span> · экономия {off(PRICES.bundle)}%</span>
+                  <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:4}}><span className="strike">{PRICES.bundle.was} ✦</span> · экономия {off(PRICES.bundle)}% против трёх по отдельности</span>
                 </span>
                 <span className="mono" style={{flexShrink:0,padding:"11px 18px",borderRadius:R.pill,background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>{waiting==="bundle"?"…":`${PRICES.bundle.now} ✦`}</span>
               </button>

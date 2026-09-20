@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { appLink, shareLink } from "@/lib/links"
 
 // Форма результата — как возвращает /api/love: { percent, full }
 type ScanResult = {
@@ -257,13 +258,12 @@ export function InvitePartnerButton({ result }: { result: ScanResult }) {
 //
 // Отдельно от InvitePartnerButton выше: та ссылка (invite_<sessionId>) — для
 // сравнения результатов вдвоём, создаётся через бэкенд. Эта — для реферальной
-// механики "пригласи 3 друзей → бесплатный разбор" (ref_<userId>), см.
+// механики "пригласи друзей → бесплатный разбор" (ref_<userId>), см.
 // /api/invite/complete и /api/invite/status. Ссылка строится прямо на клиенте
 // без похода в бэкенд, потому что userId уже детерминированно определяет,
 // кому засчитать награду — session тут не нужна.
 //
-// Нужен NEXT_PUBLIC_TELEGRAM_BOT_USERNAME в env (без @, например love_scanner_bot) —
-// именно с префиксом NEXT_PUBLIC_, иначе значение не попадёт в клиентский бандл.
+// Ссылка собирается в lib/links.ts (NEXT_PUBLIC_TELEGRAM_BOT_USERNAME, NEXT_PUBLIC_APP_SHORT_NAME).
 
 export function InviteFriendsButton({
   count,
@@ -274,8 +274,7 @@ export function InviteFriendsButton({
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
   const userId = getTelegramUserId()
-  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-  const link = userId && botUsername ? `https://t.me/${botUsername}/love?startapp=ref_${userId}` : null
+  const link = userId ? appLink(`ref_${userId}`) : null
 
   const share = async () => {
     if (!link) return
@@ -283,9 +282,7 @@ export function InviteFriendsButton({
     const tg = window.Telegram?.WebApp
     if (tg?.openTelegramLink) {
       tg.openTelegramLink(
-        `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
-          "Проверь совместимость — и заодно накинь мне бесплатный разбор 👀"
-        )}`
+        shareLink(link, "Загрузи два фото и узнай процент совместимости 💘 По этой ссылке тебе сразу дадут бесплатный разбор")
       )
       return
     }

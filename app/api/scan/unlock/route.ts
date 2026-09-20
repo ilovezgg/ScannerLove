@@ -15,7 +15,7 @@
 // GET в /api/custom-credit/use остаётся — он только читает.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { kvGet, kvSet, kvSpendOne } from '@/lib/kv'
+import { kvGet, kvSet, kvSpendOne, kvIncr } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
 import { isSubscriber, isTester } from '@/lib/entitlements'
 import type { ScanRecord, ScanFeature } from '../route'
@@ -54,6 +54,8 @@ export async function POST(req: NextRequest){
       allowed = true
 
     } else if(source === "referral"){
+      // Один кредит = одно письмо. Пакет из трёх писем за кредит выходил дешевле любой покупки.
+      if(feature === "bundle") return NextResponse.json({ ok:false, error: "bundle is not available for credits" }, { status: 400 })
       const left = await kvSpendOne(refCreditsKey(user.id))
       if(left === null){
         return NextResponse.json({ ok:false, error: "no credits" }, { status: 400 })
@@ -63,11 +65,11 @@ export async function POST(req: NextRequest){
       spentKey = refCreditsKey(user.id)
 
     } else if(source === "credit"){
-      // Приз с колеса — это флаг, а не счётчик. Гасим его до разблокировки:
-      // при двойном тапе второй запрос просто не пройдёт.
-      const has = await kvGet<boolean>(freeCustomKey(user.id))
-      if(!has) return NextResponse.json({ ok:false, error: "no credit" }, { status: 400 })
-      await kvSet(freeCustomKey(user.id), false)
+      // Приз с колеса даёт бесплатный «свой вопрос» и больше ничего. Раньше feature брался из тела,
+      // и этим призом открывался bundle за 49 звёзд. Расход атомарный (счётчик), а не get+set.
+      if(feature !== "custom") return NextResponse.json({ ok:false, error: "credit works only for custom" }, { status: 400 })
+      const left = await kvSpendOne(freeCustomKey(user.id))
+      if(left === null) return NextResponse.json({ ok:false, error: "no credit" }, { status: 400 })
       allowed = true
       spentKey = freeCustomKey(user.id)
     }
@@ -93,12 +95,7 @@ export async function POST(req: NextRequest){
     }catch(err){
       // Кредит списан, а запись не сохранилась — возвращаем кредит,
       // иначе человек заплатит приглашением и ничего не получит.
-      if(spentKey === refCreditsKey(user.id)){
-        const cur = (await kvGet<number>(spentKey)) || 0
-        await kvSet(spentKey, cur + 1)
-      } else if(spentKey === freeCustomKey(user.id)){
-        await kvSet(spentKey, true)
-      }
+      if(spentKey) await kvIncr(spentKey)   // атомарно: get+set терял кредит при параллельном списании
       throw err
     }
 

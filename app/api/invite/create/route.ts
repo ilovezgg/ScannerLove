@@ -1,15 +1,11 @@
 import { NextRequest } from 'next/server'
 import { Redis } from "@upstash/redis"
 import { authUserOrDev } from '@/lib/telegram-auth'
+import { appLink } from '@/lib/links'
 
 export const runtime = "nodejs"
 
 const redis = Redis.fromEnv()
-
-// Короткое имя мини-аппа из BotFather (/myapps). Дефолт "app" — как было
-// захардкожено раньше; переопределяется через env, если в BotFather другое имя.
-const APP_SHORT_NAME = process.env.APP_SHORT_NAME?.trim() || "app"
-const BOT_USERNAME = "lovescan_ai_bot"
 
 // Сколько живёт приглашение (7 дней)
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
@@ -44,7 +40,7 @@ export async function POST(req: NextRequest) {
     ex: SESSION_TTL_SECONDS,
   })
 
-  const link = `https://t.me/${BOT_USERNAME}/${APP_SHORT_NAME}?startapp=invite_${sessionId}`
+  const link = appLink(`invite_${sessionId}`)
 
   return Response.json({ sessionId, link })
 }

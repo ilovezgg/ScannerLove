@@ -45,6 +45,18 @@ export async function kvIncr(key: string): Promise<number>{
   return next
 }
 
+// Счётчик с временем жизни — для суточных лимитов. TTL вешаем только на первый
+// инкремент окна, иначе каждое обращение продлевало бы окно бесконечно.
+export async function kvIncrTtl(key: string, ttlSec: number): Promise<number>{
+  if(hasVercelKV){
+    const kv = await vercelKv()
+    const n = await kv.incr(key)
+    if(n === 1) await kv.expire(key, ttlSec)
+    return n
+  }
+  return kvIncr(key)
+}
+
 // НОВОЕ. Атомарный декремент — нужен для списания кредитов.
 //
 // Раньше кредиты списывались связкой kvGet → проверка → kvSet. Между чтением

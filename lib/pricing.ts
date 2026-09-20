@@ -9,13 +9,20 @@ export type Feature =
   | "deep" | "hidden" | "future" | "custom"
   | "bundle" | "conversation" | "sub" | "seasonal"
 
+// `was` — это цена, по которой товар реально продавался. Раньше тут стояли вечные «зачёркнутые»
+// цифры (27 вместо 42 и т.д.), по которым никто никогда не покупал. В ЕС (директива Omnibus
+// 2019/2161) скидка считается от самой низкой цены за предыдущие 30 дней, а постоянная
+// фейковая «было» считается вводящей в заблуждение практикой; в РФ это тоже повод для ФАС.
+// Единственная честная экономия у нас — пакет против трёх писем по отдельности: ниже он и считается.
+const SINGLES = { deep: 27, hidden: 20, future: 40 }
+
 export const PRICES: Record<Exclude<Feature, "seasonal">, { now: number; was: number }> = {
-  deep:         { now: 27,  was: 42 },
-  hidden:       { now: 20,  was: 32 },
-  future:       { now: 40,  was: 65 },
-  custom:       { now: 35,  was: 55 },
-  bundle:       { now: 49,  was: 139 },
-  conversation: { now: 99,  was: 149 },
+  deep:         { now: SINGLES.deep,   was: SINGLES.deep },
+  hidden:       { now: SINGLES.hidden, was: SINGLES.hidden },
+  future:       { now: SINGLES.future, was: SINGLES.future },
+  custom:       { now: 35,  was: 35 },
+  bundle:       { now: 49,  was: SINGLES.deep + SINGLES.hidden + SINGLES.future },   // 87 за три по отдельности
+  conversation: { now: 99,  was: 99 },
   sub:          { now: 299, was: 299 },
 }
 
@@ -36,6 +43,14 @@ export const SUB_PERIOD_SEC = 2_592_000 // 30 дней
 // Пять — компромисс: этого хватает на 100-150 сообщений, а payload остаётся
 // в пределах лимита запроса (5 картинок в base64 ≈ 1.8 МБ при лимите 4.5 МБ).
 export const MAX_CHAT_SHOTS = 5
+
+// Сколько приглашённых даёт рефереру одну бесплатную разблокировку письма.
+// Приглашённый получает одну сразу, при первом скане.
+export const INVITES_PER_REWARD = 2
+
+// Сколько бесплатных сканов в сутки на человека. Каждый скан стоит нам вызова vision-модели,
+// поэтому без лимита любой скрипт сливает бюджет. Подписка «Архив» лимит снимает.
+export const FREE_SCANS_PER_DAY = 12
 
 // Сколько фото принимаем в обычном скане: два портрета + опционально совместное.
 export const MAX_SCAN_PHOTOS = 3

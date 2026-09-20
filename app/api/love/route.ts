@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isEventCurrentlyActive, getEventById } from '@/lib/events'
 import { authUserOrDev } from '@/lib/telegram-auth'
 import { canAccess, isSubscriber, isTester, type PaidFeature } from '@/lib/entitlements'
-import { MAX_CHAT_SHOTS, MAX_SCAN_PHOTOS } from '@/lib/pricing'
+import { MAX_CHAT_SHOTS, MAX_SCAN_PHOTOS, FREE_SCANS_PER_DAY } from '@/lib/pricing'
+import { kvIncr, kvIncrTtl, kvDecr, kvSpendOne, kvSet } from '@/lib/kv'
+
+// Потолок на суммарный размер картинок в запросе (символы base64). Клиент жмёт до ~1000px,
+// портрет весит 100-250 КБ, 5 скриншотов переписки до ~2 МБ. 4.4 МБ = лимит тела запроса на Vercel (4.5 МБ), больше всё равно не дойдёт.
+const MAX_PAYLOAD_CHARS = 4_400_000
 
 export const runtime = "nodejs"          // нужен crypto для проверки подписи initData
 export const maxDuration = 60            // разбор 5 скриншотов не укладывается в 30с
@@ -59,7 +64,11 @@ export type LoveResult = { percent:number, full:string, teasers?:Record<string,s
 function validate(j: any, minLen = 200): LoveResult {
   if(j?.percent === undefined || j?.percent === null || !j?.full) throw new Error("no json / missing fields")
   if(String(j.full).length < minLen) throw new Error("too short")
-  const out: LoveResult = { percent: Number(j.percent), full: String(j.full) }
+  // Модель иногда шлёт "85%" или "85,5". Number() давал NaN, JSON превращал его в null, а роут
+  // возвращал 200 и сжигал лимит. Теперь мусор бросает ошибку, и запрос уходит следующему провайдеру.
+  const p = parseFloat(String(j.percent).replace(",", "."))
+  if(!Number.isFinite(p)) throw new Error("bad percent")
+  const out: LoveResult = { percent: Math.min(100, Math.max(0, Math.round(p))), full: String(j.full) }
   if(j.teasers && typeof j.teasers === "object"){
     const t: Record<string,string> = {}
     for(const k of ["deep","hidden","future","custom"]){
@@ -419,6 +428,10 @@ export async function POST(req: NextRequest){
   // Вынесено из try, чтобы catch знал, платный это тип или бесплатный тизер —
   // заглушку можно отдавать только для "short".
   let type = "short"
+  // Что списали до вызова моделей. Если все провайдеры упали, вернём обратно:
+  // человек не должен платить лимитом или кредитом за нашу поломку.
+  let scanQuotaKey: string | null = null
+  let convCreditKey: string | null = null
   try{
     const body = await req.json()
     type = body?.type || "short"
@@ -436,11 +449,20 @@ export async function POST(req: NextRequest){
     } = body
 
     // 1. Собираем кадры
-    let photos: string[] = Array.isArray(photosRaw) ? photosRaw.filter((p:any)=>typeof p === "string" && p.startsWith("data:")) : []
-    if(!photos.length && photo1 && photo2) photos = [photo1, photo2]
+    const isImg = (p:any) => typeof p === "string" && p.startsWith("data:image/")
+    let photos: string[] = Array.isArray(photosRaw) ? photosRaw.filter(isImg) : []
+    if(!photos.length && isImg(photo1) && isImg(photo2)) photos = [photo1, photo2]
     if(!photos.length) return NextResponse.json({ error: "Добавь фото заново" }, { status: 400 })
+    if(photos.reduce((n,p)=>n+p.length,0) > MAX_PAYLOAD_CHARS){
+      return NextResponse.json({ error: "Фото слишком тяжёлые. Выбери другие или сделай скриншот поменьше." }, { status: 413 })
+    }
 
+    // "chat" (до 5 картинок) допустим только для разбора переписки: иначе бесплатный скан
+    // принимал пять картинок вместо трёх.
     const input: InputKind = ["two","joint","both","chat"].includes(inputRaw) ? inputRaw : "two"
+    if(input === "chat" && type !== "conversation"){
+      return NextResponse.json({ error: "Неверный режим" }, { status: 400 })
+    }
     const limit = input === "chat" ? MAX_CHAT_SHOTS : MAX_SCAN_PHOTOS
     if(photos.length > limit){
       return NextResponse.json({ error: `Слишком много изображений: максимум ${limit}` }, { status: 400 })
@@ -460,11 +482,17 @@ export async function POST(req: NextRequest){
 
       if(!isTester(user.id)){
         if(type === "conversation"){
-          // разбор переписки не привязан к скану: либо подписка, либо разовая покупка
+          // Разбор переписки не привязан к скану: либо подписка, либо разовая покупка.
+          // Разовая = кредит conv_credit, который вебхук начисляет после оплаты.
+          // Раньше кредит только копился и нигде не списывался, а проверка шла по
+          // scanId, которого у переписки нет, поэтому заплативший получал 402.
           const sub = await isSubscriber(user.id)
-          const paid = !sub && await canAccess(user.id, scanId, "conversation")
-          if(!sub && !(paid && paid.ok)){
-            return NextResponse.json({ error: "Разбор переписки не оплачен" }, { status: 402 })
+          if(!sub){
+            const key = `conv_credit:${user.id}`
+            if(await kvSpendOne(key) === null){
+              return NextResponse.json({ error: "Разбор переписки не оплачен" }, { status: 402 })
+            }
+            convCreditKey = key
           }
         } else {
           const access = await canAccess(user.id, scanId, type as PaidFeature)
@@ -475,9 +503,32 @@ export async function POST(req: NextRequest){
       }
     }
 
+    // Бесплатный скан. Раньше тут не было ни авторизации, ни лимита: любой мог слать
+    // POST с картинкой и жечь наши деньги на vision-моделях (до 5 попыток по 12 с на запрос).
+    // Теперь: только из Telegram, FREE_SCANS_PER_DAY в сутки; подписка снимает лимит,
+    // и «безлимитные сканы» в ней наконец что-то значат.
     if(type==="seasonal"){
       if(!eventId || !isEventCurrentlyActive(eventId)){
         return NextResponse.json({ error: "Этот разбор сейчас недоступен — ивент закончился или ещё не начался" }, { status: 403 })
+      }
+    }
+
+    // seasonal тоже идёт через этот лимит: раньше у него не было ни авторизации, ни счётчика,
+    // и с 7 февраля он открылся бы всем даром.
+    if(type==="short" || type==="seasonal"){
+      if(!user) return NextResponse.json({ error: "Открой приложение через бота" }, { status: 401 })
+      if(!isTester(user.id) && !(await isSubscriber(user.id))){
+        const day = new Date().toISOString().slice(0,10)
+        const key = `rl:scan:${user.id}:${day}`
+        const n = await kvIncrTtl(key, 90_000)
+        scanQuotaKey = key   // сразу после инкремента: любой дальнейший сбой вернёт слот
+        if(n > FREE_SCANS_PER_DAY){
+          scanQuotaKey = null
+          await kvDecr(key).catch(()=>{})
+          return NextResponse.json({
+            error: `На сегодня ${FREE_SCANS_PER_DAY} бесплатных сканов закончились. Завтра будут новые, а подписка «Архив» снимает лимит.`,
+          }, { status: 429 })
+        }
       }
     }
 
@@ -503,10 +554,19 @@ export async function POST(req: NextRequest){
       ()=>callOR("qwen/qwen-2-vl-72b-instruct", prompt, photos, maxTokens, minLen),
     ]
 
+    // Общий бюджет времени: 5 попыток по 12 с упирались в maxDuration=60, платформа убивала функцию
+    // до блока с возвратом, и лимит или оплаченный кредит сгорали.
+    const deadline = Date.now() + 45_000
     for(const attempt of attempts){
+      if(Date.now() > deadline) break
       try{
         const r = await attempt()
-        if(r?.percent !== undefined) return NextResponse.json(r)
+        if(Number.isFinite(r?.percent)){
+          // Отметка «реально сканировал»: по ней invite/complete отличает живого нового человека
+          // от аккаунта, который просто открыл ссылку.
+          if(user && type==="short") await kvSet(`scanned:${user.id}`, 1).catch(()=>{})
+          return NextResponse.json(r)
+        }
       }catch(e){
         console.error("MODEL FAIL:", (e as Error).message)
         continue
@@ -515,16 +575,13 @@ export async function POST(req: NextRequest){
     throw new Error("all providers dead")
   }catch(e){
     console.error("ALL FAILED", e)
-    // Заглушка отдаётся только для бесплатного тизера. Отдавать выдуманный
-    // текст за деньги — прямой путь к возвратам, поэтому на платных типах
-    // честно сообщаем об ошибке и не отдаём поле full вообще — клиент не должен
-    // иметь возможность спутать эту ошибку с настоящим разбором.
-    if(type === "short"){
-      return NextResponse.json({
-        percent: 84,
-        full: "Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту — деньги за это не списываются.",
-      }, { status: 503 })
-    }
-    return NextResponse.json({ error: "Сервис перегружен, попробуй ещё раз через минуту" }, { status: 503 })
+    // Возвращаем списанное: сбой на нашей стороне не должен стоить человеку лимита или кредита.
+    // Два независимых возврата: сбой первого не должен пропускать второй.
+    if(scanQuotaKey) await kvDecr(scanQuotaKey).catch(err => console.error("REFUND FAILED", scanQuotaKey, err))
+    if(convCreditKey) await kvIncr(convCreditKey).catch(err => console.error("REFUND FAILED", convCreditKey, err))
+    // Раньше для бесплатного скана тут отдавался выдуманный percent:84 и клиент показывал
+    // его как настоящий результат. Теперь честная ошибка без percent и full: клиент не
+    // может спутать её с разбором.
+    return NextResponse.json({ error: "Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту, лимит не потрачен." }, { status: 503 })
   }
 }

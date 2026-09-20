@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kvGet } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
+import { INVITES_PER_REWARD } from '@/lib/pricing'
 
 export const runtime = "nodejs"
-
-const INVITES_PER_REWARD = 3
 
 export async function GET(req: NextRequest){
   const user = authUserOrDev(req)

@@ -23,8 +23,9 @@
 //    setWebhook?url=...&secret_token=<WEBHOOK_SECRET>
 
 import { NextRequest, NextResponse } from 'next/server'
-import { kvGet, kvSet } from '@/lib/kv'
+import { kvGet, kvSet, kvIncr, kvDecr, kvSadd } from '@/lib/kv'
 import { grantSubscription, markSubscriptionCancelled, revokeSubscription, type PaidFeature } from '@/lib/entitlements'
+import { appLink } from '@/lib/links'
 
 export const runtime = "nodejs"
 
@@ -60,8 +61,8 @@ function parsePayload(raw: string){
 async function unlockScanFeature(scanId: string, userId: string | number, feature: PaidFeature | "bundle"){
   const scan = await kvGet<ScanRecord>(`scan:${scanId}`)
   if(!scan){
-    console.error("webhook: scan not found", scanId)
-    return
+    // Бросаем, а не молчим: скан мог ещё не успеть записаться, и повторная доставка это исправит.
+    throw new Error(`scan not found: ${scanId}`)
   }
   // Оплатить чужой скан невозможно — проверяем владельца.
   if(String(scan.userId) !== String(userId)){
@@ -116,46 +117,24 @@ export async function POST(req: NextRequest){
       console.warn("webhook: payload user != payer", payloadUser, telegramId)
     }
 
-    // Идемпотентность: Telegram может повторить доставку апдейта.
+    // Идемпотентность: Telegram может повторить доставку апдейта. Раньше это был get, затем set:
+    // два параллельных ретрая оба проходили проверку и начисляли покупку дважды. INCR атомарен,
+    // обрабатывает платёж только тот, кто получил 1.
     const chargeId = payment.telegram_payment_charge_id
-    if(chargeId){
-      const seen = await kvGet<number>(`charge:${chargeId}`)
-      if(seen) return new Response("ok")
-      await kvSet(`charge:${chargeId}`, Date.now())
-    }
+    const chargeKey = chargeId ? `charge:${chargeId}` : null
+    if(chargeKey && await kvIncr(chargeKey) > 1) return new Response("ok")
 
-    if(feature === "sub"){
-      const sub = await grantSubscription(userId, {
-        expiresAtSec: payment.subscription_expiration_date,
-        chargeId,
-        isRenewal: !!payment.is_recurring && !payment.is_first_recurring,
-      })
-      // Сообщение шлём только при первой оплате — уведомлять о каждом
-      // автосписании раздражает и повышает отписки.
-      if(!payment.is_recurring || payment.is_first_recurring){
-        await tg("sendMessage", {
-          chat_id: telegramId,
-          text: "Архив открыт. Безлимитные сканы и все разборы — 30 дней, дальше продлится само. Отменить можно в любой момент в настройках Telegram.",
-        })
-      }
-      console.log("SUB granted", userId, new Date(sub.until).toISOString())
-      return new Response("ok")
+    try{
+      return await handlePayment(payment, telegramId, userId, feature, scanId, chargeId)
+    }catch(e){
+      // Не смогли выдать покупку: снимаем метку и отвечаем 500, Telegram повторит доставку.
+      // Раньше метка ставилась до обработки, и после сбоя ретрай молча игнорировался: человек платил и ничего не получал.
+      console.error("webhook: payment handling failed", chargeId, e)
+      // Если откат метки сам упал, ретрай Telegram получит ok и покупка потеряется молча.
+      // Такое должно быть громко видно в логах: разбирать руками и делать refundStarPayment.
+      if(chargeKey) await kvDecr(chargeKey).catch(err => console.error("PAYMENT LOST: rollback failed, refund manually", chargeId, userId, feature, err))
+      return new Response("retry", { status: 500 })
     }
-
-    if(feature === "conversation"){
-      // Разбор переписки не привязан к скану — открываем как отдельную покупку.
-      await kvSet(`conv:${userId}:${chargeId || Date.now()}`, { ts: Date.now(), used: false })
-      await kvSet(`conv_credit:${userId}`, ((await kvGet<number>(`conv_credit:${userId}`)) || 0) + 1)
-      return new Response("ok")
-    }
-
-    if(scanId){
-      await unlockScanFeature(scanId, userId, feature as PaidFeature | "bundle")
-    } else {
-      console.error("webhook: paid one-off without scanId", feature, userId)
-    }
-
-    return new Response("ok")
   }
 
   /* ── возврат средств ── */
@@ -168,13 +147,81 @@ export async function POST(req: NextRequest){
     return new Response("ok")
   }
 
+  /* ── /start: приветствие и кнопка в приложение ──
+     Раньше бот молчал на любое сообщение, кроме платежей: человек приходил по ссылке,
+     жал Start и получал пустоту. */
+  const text: string | undefined = update.message?.text
+  if(text && /^\/start(\s|$)/.test(text)){
+    try{
+      await handleStart(update.message.chat.id, update.message.from.id, text.split(/\s+/)[1], update.message.from.language_code)
+    }catch(e){ console.error("webhook: /start failed", e) }
+    return new Response("ok")
+  }
+
   /* ── пользователь отключил автопродление ── */
-  // Telegram присылает это как обычную оплату с is_recurring=false в некоторых
-  // клиентах, но надёжнее ориентироваться на отдельный апдейт, если он есть.
-  if(update.message?.text === "/unsubscribe"){
+  if(text === "/unsubscribe"){
     await markSubscriptionCancelled(update.message.from.id)
     return new Response("ok")
   }
 
   return new Response("ok")
+}
+
+// Приветствие по языку Telegram-клиента. Английский по умолчанию: каталог Apps Center проверяет,
+// что бот отвечает на /start по-английски (по описаниям тех, кто проходил модерацию, проверить у Telegram).
+const START_COPY = {
+  ru: { text: "💘 Love Scanner\n\nЗагрузи два фото (или одно совместное), и за 10 секунд получишь процент совместимости и разбор: что видно по позам, взглядам и дистанции.\n\nЭто развлечение, а не диагноз. Фото уходят только на разбор нейросети.", btn: "Проверить совместимость ✦" },
+  es: { text: "💘 Love Scanner\n\nSube dos fotos (o una juntos) y en 10 segundos verás el porcentaje de compatibilidad y qué dicen las poses, las miradas y la distancia.\n\nEs solo entretenimiento, no un diagnóstico. Las fotos se envían solo para el análisis con IA.", btn: "Comprobar compatibilidad ✦" },
+  en: { text: "💘 Love Scanner\n\nUpload two photos (or one together) and in 10 seconds get a compatibility score and a reading: what poses, glances and distance say.\n\nJust for fun, not a diagnosis. Photos are sent only for AI analysis.", btn: "Check compatibility ✦" },
+} as const
+
+async function handleStart(chatId: number, fromId: number, param?: string, langCode?: string){
+  // Человек сам нажал Start: теперь боту можно писать ему первым (ежедневное письмо).
+  await kvSadd("push:subscribers", String(fromId)).catch(()=>{})
+  // ref_/invite_ из ссылки ?start= переносим в startapp, чтобы приглашение не терялось.
+  const startapp = param && /^(ref|invite)_[A-Za-z0-9_-]{1,64}$/.test(param) ? param : undefined
+  const c = START_COPY[(["ru", "uk", "be", "kk"].includes(langCode || "") ? "ru" : (langCode || "").startsWith("es") ? "es" : "en")]
+  await tg("sendMessage", {
+    chat_id: chatId,
+    text: c.text,
+    reply_markup: { inline_keyboard: [[{ text: c.btn, url: appLink(startapp) }]] },
+  })
+}
+
+async function handlePayment(payment: any, telegramId: number, userId: number, feature: string, scanId: string | undefined, chargeId: string | undefined){
+  {
+    if(feature === "sub"){
+      const sub = await grantSubscription(userId, {
+        expiresAtSec: payment.subscription_expiration_date,
+        chargeId,
+        isRenewal: !!payment.is_recurring && !payment.is_first_recurring,
+      })
+      // Сообщение шлём только при первой оплате — уведомлять о каждом
+      // автосписании раздражает и повышает отписки.
+      if(!payment.is_recurring || payment.is_first_recurring){
+        // Сбой уведомления не должен откатывать уже выданную подписку и запускать повторную выдачу.
+        await tg("sendMessage", {
+          chat_id: telegramId,
+          text: "Архив открыт. Безлимитные сканы и все разборы — 30 дней, дальше продлится само. Отменить можно в любой момент в настройках Telegram.",
+        }).catch(err => console.error("webhook: sub welcome failed", err))
+      }
+      console.log("SUB granted", userId, new Date(sub.until).toISOString())
+      return new Response("ok")
+    }
+
+    if(feature === "conversation"){
+      // Разбор переписки не привязан к скану — открываем как отдельную покупку.
+      await kvSet(`conv:${userId}:${chargeId || Date.now()}`, { ts: Date.now(), used: false })
+      await kvIncr(`conv_credit:${userId}`)   // атомарно: get+set терял кредит при двух платежах подряд
+      return new Response("ok")
+    }
+
+    if(scanId){
+      await unlockScanFeature(scanId, userId, feature as PaidFeature | "bundle")
+    } else {
+      console.error("webhook: paid one-off without scanId", feature, userId)
+    }
+
+    return new Response("ok")
+  }
 }

@@ -1,6 +1,6 @@
 // ПОЛОЖИТЬ СЮДА: app/api/wheel/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { kvGet, kvSet, kvIncr } from '@/lib/kv'
+import { kvGet, kvSet, kvIncr, kvIncrTtl } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
 
 export const runtime = "nodejs"
@@ -17,7 +17,7 @@ function todayKey(){
 const PRIZES = [
   { id: "flavor1", weight: 25, label: "Сегодня звёзды на твоей стороне ✨", type: "flavor" },
   { id: "flavor2", weight: 25, label: "Что-то важное произойдёт до заката 🌙", type: "flavor" },
-  { id: "ref_credit", weight: 25, label: "+1 бесплатная разблокировка (как за 3 приглашения) 🎁", type: "ref_credit" },
+  { id: "ref_credit", weight: 25, label: "+1 бесплатная разблокировка (как за приглашения) 🎁", type: "ref_credit" },
   { id: "free_custom", weight: 15, label: "Бесплатный вопрос \"Спроси что угодно\" на следующий скан 💌", type: "free_custom" },
   { id: "flavor3", weight: 10, label: "Сегодня хороший день, чтобы написать первым(ой) 📩", type: "flavor" },
 ] as const
@@ -51,10 +51,16 @@ export async function POST(req: NextRequest){
     const already = await kvGet<{ prizeId: string, label: string }>(key)
     if(already) return NextResponse.json({ ok: true, alreadySpun: true, prize: already })
 
+    // Слот занимаем атомарно ДО выдачи приза. Раньше get, затем выдача, затем set: двадцать
+    // параллельных запросов проходили проверку и каждый начислял кредит.
+    if(await kvIncrTtl(`wheel:lock:${userId}:${todayKey()}`, 90_000) > 1){
+      return NextResponse.json({ ok: true, alreadySpun: true, prize: (await kvGet(key)) || null })
+    }
+
     const prize = pickPrize()
 
     if(prize.type === "ref_credit") await kvIncr(`ref:credits:${userId}`)
-    if(prize.type === "free_custom") await kvSet(`custom:free_credit:${userId}`, true)
+    if(prize.type === "free_custom") await kvIncr(`custom:free_credit:${userId}`)
 
     const result = { prizeId: prize.id, label: prize.label }
     await kvSet(key, result)
