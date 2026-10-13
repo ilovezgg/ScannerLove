@@ -1,9 +1,10 @@
 // ПОЛОЖИТЬ СЮДА: app/api/stars/create/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { getEventById, isEventCurrentlyActive } from '@/lib/events'
+import { getEventById, isEventCurrentlyActive, eventText } from '@/lib/events'
 import { authUserOrDev } from '@/lib/telegram-auth'
 import { isSubscriber, getSubscription } from '@/lib/entitlements'
-import { PRICES, CATALOG, SUB_PERIOD_SEC, type Feature } from '@/lib/pricing'
+import { PRICES, CATALOG, CATALOG_EN, SUB_PERIOD_SEC, type Feature } from '@/lib/pricing'
+import { reqLang, tr } from '@/lib/i18n'
 
 export const runtime = "nodejs"
 
@@ -14,8 +15,11 @@ export async function POST(req: NextRequest){
     // userId больше НЕ берём из тела запроса. Раньше его можно было
     // подставить любой и оформить покупку на чужой аккаунт.
     const user = authUserOrDev(req)
-    if(!user) return NextResponse.json({ error: "Открой приложение через бота" }, { status: 401 })
+    const lang = reqLang(req, user)
+    if(!user) return NextResponse.json({ error: tr(lang, "Открой приложение через бота", "Open the app through the bot") }, { status: 401 })
     const userId = user.id
+    // Заголовок и описание счёта Telegram показывает как есть — на языке покупателя.
+    const catalog = lang === "en" ? CATALOG_EN : CATALOG
 
     const { feature, eventId, scanId } = await req.json() as {
       feature: Feature
@@ -28,11 +32,12 @@ export async function POST(req: NextRequest){
 
     if(feature === "seasonal"){
       if(!eventId || !isEventCurrentlyActive(eventId)){
-        return NextResponse.json({ error: "Этот разбор сейчас недоступен" }, { status: 403 })
+        return NextResponse.json({ error: tr(lang, "Этот разбор сейчас недоступен", "This reading is not available right now") }, { status: 403 })
       }
       const event = getEventById(eventId)!
-      title = event.title
-      desc = event.bannerText
+      const et = eventText(event, lang)
+      title = et.title
+      desc = et.bannerText
       finalPrice = event.price
 
     } else if(feature === "sub"){
@@ -40,17 +45,17 @@ export async function POST(req: NextRequest){
       if(await isSubscriber(userId)){
         const sub = await getSubscription(userId)
         return NextResponse.json({
-          error: "Подписка уже активна",
+          error: tr(lang, "Подписка уже активна", "Your subscription is already active"),
           until: sub?.until,
         }, { status: 409 })
       }
-      title = CATALOG.sub.title
-      desc = CATALOG.sub.desc
+      title = catalog.sub.title
+      desc = catalog.sub.desc
       finalPrice = PRICES.sub.now
       subscriptionPeriod = SUB_PERIOD_SEC
 
     } else {
-      const entry = CATALOG[feature as keyof typeof CATALOG]
+      const entry = catalog[feature as keyof typeof catalog]
       const price = PRICES[feature as keyof typeof PRICES]
       if(!entry || !price) return NextResponse.json({ error: "unknown feature" }, { status: 400 })
       // Разовые покупки привязаны к конкретному скану — без него вебхук

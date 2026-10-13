@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react"
 import { appLink, shareLink } from "@/lib/links"
+import { clientLang, tr } from "@/lib/i18n"
+
+// Компонент рендерится только на клиенте (page.tsx ждёт язык), так что язык можно брать в момент вызова.
+const L = (ru: string, en: string) => tr(clientLang(), ru, en)
 
 // Форма результата — как возвращает /api/love: { percent, full }
 type ScanResult = {
@@ -126,11 +130,11 @@ export function InviteBanner({ onJoin }: { onJoin: (sessionId: string) => void }
           ✦
         </div>
         <p className="ai-font" style={{ fontSize: 13.5, lineHeight: 1.3 }}>
-          Тебя пригласили сравнить результаты
+          {L("Тебя пригласили сравнить результаты","You've been invited to compare results")}
         </p>
       </div>
       <span className="mono" style={{ fontSize: 10, opacity: 0.45, whiteSpace: "nowrap" }}>
-        пройди тест ↓
+        {L("пройди тест ↓","take the test ↓")}
       </span>
     </div>
   )
@@ -167,7 +171,7 @@ export function InvitePartnerButton({ result }: { result: ScanResult }) {
     if (tg?.openTelegramLink) {
       tg.openTelegramLink(
         `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(
-          "Пройди тест и сравним результаты 💘"
+          L("Пройди тест и сравним результаты 💘","Take the test and let's compare results 💘")
         )}`
       )
       return
@@ -209,13 +213,13 @@ export function InvitePartnerButton({ result }: { result: ScanResult }) {
           opacity: loading ? 0.7 : 1,
         }}
       >
-        {loading ? "Создаём ссылку…" : <>💌 Пригласить партнёра</>}
+        {loading ? L("Создаём ссылку…","Creating link…") : <>💌 {L("Пригласить партнёра","Invite partner")}</>}
       </button>
     )
   }
 
   const label =
-    copyState === "copied" ? "Ссылка скопирована ✓" : copyState === "failed" ? "Не вышло — держи ссылку ниже" : "Отправить ссылку партнёру"
+    copyState === "copied" ? L("Ссылка скопирована ✓","Link copied ✓") : copyState === "failed" ? L("Не вышло — держи ссылку ниже","Didn't work, here's the link below") : L("Отправить ссылку партнёру","Send link to partner")
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -282,7 +286,7 @@ export function InviteFriendsButton({
     const tg = window.Telegram?.WebApp
     if (tg?.openTelegramLink) {
       tg.openTelegramLink(
-        shareLink(link, "Загрузи два фото и узнай процент совместимости 💘 По этой ссылке тебе сразу дадут бесплатный разбор")
+        shareLink(link, L("Загрузи два фото и узнай процент совместимости 💘 По этой ссылке тебе сразу дадут бесплатный разбор","Upload two photos and get your compatibility score 💘 This link gives you a free reading right away"))
       )
       return
     }
@@ -294,7 +298,7 @@ export function InviteFriendsButton({
   if (!link) return null // нет userId (не в Telegram) или не задан NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
 
   const label =
-    copyState === "copied" ? "Ссылка скопирована ✓" : copyState === "failed" ? "Не вышло — держи ссылку ниже" : "💌 Пригласить друзей"
+    copyState === "copied" ? L("Ссылка скопирована ✓","Link copied ✓") : copyState === "failed" ? L("Не вышло — держи ссылку ниже","Didn't work, here's the link below") : L("💌 Пригласить друзей","💌 Invite friends")
 
   return (
     <div style={{ marginTop: 8 }}>
@@ -322,7 +326,7 @@ export function InviteFriendsButton({
       </button>
       {typeof count === "number" && typeof toNextReward === "number" && (
         <p className="mono" style={{ fontSize: 9.5, opacity: 0.45, textAlign: "center", marginTop: 6 }}>
-          приглашено {count} · ещё {toNextReward} до бесплатного разбора
+          {L(`приглашено ${count} · ещё ${toNextReward} до бесплатного разбора`, `invited ${count} · ${toNextReward} more to a free reading`)}
         </p>
       )}
       {copyState === "failed" && (
@@ -392,7 +396,7 @@ export function ComparisonScreen({
   if (!session) {
     return (
       <p className="ai-font" style={{ fontSize: 14, textAlign: "center", opacity: 0.7 }}>
-        Загрузка…
+        {L("Загрузка…","Loading…")}
       </p>
     )
   }
@@ -401,10 +405,10 @@ export function ComparisonScreen({
     return (
       <div style={{ textAlign: "center" }}>
         <p className="mono" style={{ fontSize: 10.5, textTransform: "uppercase", color: red, letterSpacing: "0.08em" }}>
-          Сравнение · ожидание
+          {L("Сравнение · ожидание","Comparison · waiting")}
         </p>
         <p className="ai-font" style={{ fontSize: 14, marginTop: 10 }}>
-          Ждём, пока партнёр тоже пройдёт тест…
+          {L("Ждём, пока партнёр тоже пройдёт тест…","Waiting for your partner to take the test too…")}
         </p>
       </div>
     )
@@ -417,21 +421,21 @@ export function ComparisonScreen({
   return (
     <div style={{ textAlign: "center" }}>
       <p className="mono" style={{ fontSize: 10.5, textTransform: "uppercase", color: red, letterSpacing: "0.08em" }}>
-        Сравнение · готово
+        {L("Сравнение · готово","Comparison · ready")}
       </p>
       <h2 className="serif" style={{ fontSize: 40, marginTop: 10 }}>
         {matchPercent}%
       </h2>
       <p className="mono" style={{ fontSize: 11, opacity: 0.5, marginTop: 4 }}>
-        совпадение результатов
+        {L("совпадение результатов","results match")}
       </p>
       <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16 }}>
         <div>
-          <p className="mono" style={{ fontSize: 10, opacity: 0.4 }}>ВЫ</p>
+          <p className="mono" style={{ fontSize: 10, opacity: 0.4 }}>{L("ВЫ","YOU")}</p>
           <p className="serif" style={{ fontSize: 20 }}>{b}%</p>
         </div>
         <div>
-          <p className="mono" style={{ fontSize: 10, opacity: 0.4 }}>ПАРТНЁР</p>
+          <p className="mono" style={{ fontSize: 10, opacity: 0.4 }}>{L("ПАРТНЁР","PARTNER")}</p>
           <p className="serif" style={{ fontSize: 20 }}>{a}%</p>
         </div>
       </div>

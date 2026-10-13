@@ -14,6 +14,7 @@ export type SeasonalEvent = {
   price: number      // в Stars
   buttonLabel: string
   bannerText: string
+  en: { title: string; buttonLabel: string; bannerText: string }
 }
 
 export const SEASONAL_EVENTS: SeasonalEvent[] = [
@@ -26,6 +27,11 @@ export const SEASONAL_EVENTS: SeasonalEvent[] = [
     price: 59,
     buttonLabel: "Открыть ко Дню всех влюблённых · 59 ✦",
     bannerText: "Ограниченный разбор ко Дню святого Валентина — доступен только до 15 февраля",
+    en: {
+      title: "Your year together",
+      buttonLabel: "Open for Valentine's Day · 59 ✦",
+      bannerText: "Limited Valentine's Day reading, available only until February 15",
+    },
   },
   // Пример на будущее — просто раскомментируйте и поправьте даты/текст:
   // {
@@ -39,6 +45,11 @@ export const SEASONAL_EVENTS: SeasonalEvent[] = [
   //   bannerText: "Новогодний лимитированный разбор — доступен только до 8 января",
   // },
 ]
+
+// Тексты ивента на нужном языке; цена, даты и id общие.
+export function eventText(e: SeasonalEvent, lang: "ru" | "en"){
+  return lang === "en" ? e.en : { title: e.title, buttonLabel: e.buttonLabel, bannerText: e.bannerText }
+}
 
 export function getActiveEvent(now: Date = new Date()): SeasonalEvent | null {
   const t = now.getTime()

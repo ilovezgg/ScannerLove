@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kvSet, kvSadd, kvSrem, kvSmembers } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
+import { reqLang } from '@/lib/i18n'
 
 export const runtime = "nodejs"
 
@@ -15,6 +16,8 @@ export async function POST(req: NextRequest){
     const { optIn } = await req.json()
 
     await kvSet(`user:${userId}:seen`, Date.now())
+    // Язык нужен рассылкам (cron, уведомления рефереру): у них нет запроса пользователя под рукой.
+    await kvSet(`user:${userId}:lang`, reqLang(req, user))
     // Список рассылки трогаем только при явном optIn. Раньше без поля подразумевалось true, и
     // клиент на каждом запуске снова подписывал человека, который выключил колокольчик.
     if(optIn === true){

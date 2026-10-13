@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { kvSmembers, kvSrem, kvIncrTtl } from '@/lib/kv'
+import { kvGet, kvSmembers, kvSrem, kvIncrTtl } from '@/lib/kv'
+import { isLang, type Lang } from '@/lib/i18n'
 import { appLink } from '@/lib/links'
 export const maxDuration = 60
 
@@ -16,6 +17,20 @@ const LETTERS = [
   { title: "Лёгкая ревность", text: "Она (он) сегодня заметит больше, чем показывает. Не играй в равнодушие." },
   { title: "Смелость", text: "День, когда честное «я скучаю» сработает лучше любого подарка." },
   { title: "Общая тайна", text: "У вас есть то, что понимаете только вы двое. Сегодня оно почувствуется сильнее." },
+]
+
+// Те же десять писем по-английски, в том же порядке: номер дня выбирает пару ru/en.
+const LETTERS_EN = [
+  { title: "Heart's choice", text: "You're pulled toward each other today more than it seems." },
+  { title: "Warm together", text: "Some couples you can spot from across the room. Today feels like you two." },
+  { title: "Hope", text: "One of you is falling harder today and is scared to show it." },
+  { title: "Unsaid", text: "There's one sentence you're both waiting for. Who says it first?" },
+  { title: "Quiet evening", text: "Not a day for big talks. Just be next to each other." },
+  { title: "The look", text: "Look at the person next to you a little longer than usual today. The answer is there." },
+  { title: "Old spark", text: "Something from your very beginning comes back today. Don't miss it." },
+  { title: "A little jealousy", text: "They'll notice more today than they let on. Don't play it cool." },
+  { title: "Courage", text: "A day when an honest \"I miss you\" beats any gift." },
+  { title: "Shared secret", text: "There's something only the two of you get. Today it'll feel stronger." },
 ]
 
 const DAY_MS = 86_400_000
@@ -45,9 +60,16 @@ export async function GET(req: NextRequest){
   const all = (await kvSmembers("push:subscribers")).sort()
   const shift = all.length ? (dayNum * 500) % all.length : 0
   const subscribers = [...all.slice(shift), ...all.slice(0, shift)]
-  const body = {
-    text: `🕯 Письмо дня\n\n«${letter.title}»\n${letter.text}\n\nОткрой печать, чтобы узнать, что сегодня между вами.`,
-    reply_markup: { inline_keyboard: [[{ text: "Открыть письмо ↗", url: appLink() }]] },
+  const letterEn = LETTERS_EN[dayNum % LETTERS_EN.length]
+  const bodies: Record<Lang, object> = {
+    ru: {
+      text: `🕯 Письмо дня\n\n«${letter.title}»\n${letter.text}\n\nОткрой печать, чтобы узнать, что сегодня между вами.`,
+      reply_markup: { inline_keyboard: [[{ text: "Открыть письмо ↗", url: appLink() }]] },
+    },
+    en: {
+      text: `🕯 Letter of the day\n\n"${letterEn.title}"\n${letterEn.text}\n\nBreak the seal to see what's between you today.`,
+      reply_markup: { inline_keyboard: [[{ text: "Open the letter ↗", url: appLink() }]] },
+    },
   }
 
   // Лимит Telegram на рассылку — около 30 сообщений в секунду. Идём пачками по 20 с паузой в секунду,
@@ -60,6 +82,9 @@ export async function GET(req: NextRequest){
     const batch = subscribers.slice(i, i + BATCH)
     await Promise.all(batch.map(async userId => {
       try{
+        // Язык не сохранён только у старых подписчиков, а до EN-версии бот был только русским.
+        const saved = await kvGet(`user:${userId}:lang`).catch(() => null)
+        const body = bodies[isLang(saved) ? saved : "ru"]
         const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

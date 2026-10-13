@@ -3,6 +3,7 @@ import { kvGet, kvIncr, kvDecr, kvSadd } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
 import { INVITES_PER_REWARD } from '@/lib/pricing'
 import { appLink } from '@/lib/links'
+import { isLang, tr } from '@/lib/i18n'
 
 export const runtime = "nodejs"
 
@@ -73,9 +74,14 @@ export async function POST(req: NextRequest){
 async function notifyReferrer(referrerId: string, count: number, newReward: boolean){
   const token = process.env.BOT_TOKEN?.trim()
   if(!token) return
+  const saved = await kvGet(`user:${referrerId}:lang`).catch(() => null)
+  const lang = isLang(saved) ? saved : "ru"   // до EN-версии все были русскоязычными
+  const left = INVITES_PER_REWARD - (count % INVITES_PER_REWARD)
   const text = newReward
-    ? `🎁 По твоей ссылке уже ${count} человек(а). Тебе начислена бесплатная разблокировка письма, забирай в приложении.`
-    : `👀 Кто-то проверил совместимость по твоей ссылке (всего ${count}). До следующей награды: ${INVITES_PER_REWARD - (count % INVITES_PER_REWARD)}.`
+    ? tr(lang, `🎁 По твоей ссылке уже ${count} человек(а). Тебе начислена бесплатная разблокировка письма, забирай в приложении.`,
+               `🎁 ${count} ${count === 1 ? "person" : "people"} joined through your link. You got a free letter unlock, grab it in the app.`)
+    : tr(lang, `👀 Кто-то проверил совместимость по твоей ссылке (всего ${count}). До следующей награды: ${left}.`,
+               `👀 Someone checked their compatibility through your link (${count} total). ${left} more to your next reward.`)
   try{
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
@@ -83,7 +89,7 @@ async function notifyReferrer(referrerId: string, count: number, newReward: bool
       body: JSON.stringify({
         chat_id: referrerId,
         text,
-        reply_markup: { inline_keyboard: [[{ text: "Открыть ↗", url: appLink() }]] },
+        reply_markup: { inline_keyboard: [[{ text: tr(lang, "Открыть ↗", "Open ↗"), url: appLink() }]] },
       }),
     })
   }catch{}

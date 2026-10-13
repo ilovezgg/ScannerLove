@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { kvGet, kvSet, kvIncr, kvDecr, kvSadd } from '@/lib/kv'
 import { grantSubscription, markSubscriptionCancelled, revokeSubscription, type PaidFeature } from '@/lib/entitlements'
 import { appLink } from '@/lib/links'
+import { detectLang, tr, type Lang } from '@/lib/i18n'
 
 export const runtime = "nodejs"
 
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest){
     if(chargeKey && await kvIncr(chargeKey) > 1) return new Response("ok")
 
     try{
-      return await handlePayment(payment, telegramId, userId, feature, scanId, chargeId)
+      return await handlePayment(payment, telegramId, userId, feature, scanId, chargeId, detectLang(update.message.from.language_code))
     }catch(e){
       // Не смогли выдать покупку: снимаем метку и отвечаем 500, Telegram повторит доставку.
       // Раньше метка ставилась до обработки, и после сбоя ретрай молча игнорировался: человек платил и ничего не получал.
@@ -178,9 +179,11 @@ const START_COPY = {
 async function handleStart(chatId: number, fromId: number, param?: string, langCode?: string){
   // Человек сам нажал Start: теперь боту можно писать ему первым (ежедневное письмо).
   await kvSadd("push:subscribers", String(fromId)).catch(()=>{})
+  // Язык для письма дня: подписавшийся через Start мог ни разу не открыть само приложение.
+  await kvSet(`user:${fromId}:lang`, detectLang(langCode)).catch(()=>{})
   // ref_/invite_ из ссылки ?start= переносим в startapp, чтобы приглашение не терялось.
   const startapp = param && /^(ref|invite)_[A-Za-z0-9_-]{1,64}$/.test(param) ? param : undefined
-  const c = START_COPY[(["ru", "uk", "be", "kk"].includes(langCode || "") ? "ru" : (langCode || "").startsWith("es") ? "es" : "en")]
+  const c = START_COPY[detectLang(langCode) === "ru" ? "ru" : (langCode || "").startsWith("es") ? "es" : "en"]
   await tg("sendMessage", {
     chat_id: chatId,
     text: c.text,
@@ -188,7 +191,7 @@ async function handleStart(chatId: number, fromId: number, param?: string, langC
   })
 }
 
-async function handlePayment(payment: any, telegramId: number, userId: number, feature: string, scanId: string | undefined, chargeId: string | undefined){
+async function handlePayment(payment: any, telegramId: number, userId: number, feature: string, scanId: string | undefined, chargeId: string | undefined, lang: Lang){
   {
     if(feature === "sub"){
       const sub = await grantSubscription(userId, {
@@ -202,7 +205,9 @@ async function handlePayment(payment: any, telegramId: number, userId: number, f
         // Сбой уведомления не должен откатывать уже выданную подписку и запускать повторную выдачу.
         await tg("sendMessage", {
           chat_id: telegramId,
-          text: "Архив открыт. Безлимитные сканы и все разборы — 30 дней, дальше продлится само. Отменить можно в любой момент в настройках Telegram.",
+          text: tr(lang,
+            "Архив открыт. Безлимитные сканы и все разборы — 30 дней, дальше продлится само. Отменить можно в любой момент в настройках Telegram.",
+            "Archive is open. Unlimited scans and all readings for 30 days, then it renews automatically. You can cancel anytime in Telegram settings."),
         }).catch(err => console.error("webhook: sub welcome failed", err))
       }
       console.log("SUB granted", userId, new Date(sub.until).toISOString())

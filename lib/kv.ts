@@ -57,6 +57,27 @@ export async function kvIncrTtl(key: string, ttlSec: number): Promise<number>{
   return kvIncr(key)
 }
 
+// Захват лока одной командой SET NX EX. В отличие от kvIncrTtl тут не бывает
+// ключа без TTL (incr прошёл, expire упал) и не нужен откат счётчика: снял — kvDel.
+export async function kvLock(key: string, ttlSec: number): Promise<boolean>{
+  if(hasVercelKV){
+    const kv = await vercelKv()
+    return (await kv.set(key, 1, { nx: true, ex: ttlSec })) === "OK"
+  }
+  if(memStore.has(key)) return false
+  memStore.set(key, 1)
+  return true
+}
+
+export async function kvDel(key: string){
+  if(hasVercelKV){
+    const kv = await vercelKv()
+    await kv.del(key)
+    return
+  }
+  memStore.delete(key)
+}
+
 // НОВОЕ. Атомарный декремент — нужен для списания кредитов.
 //
 // Раньше кредиты списывались связкой kvGet → проверка → kvSet. Между чтением

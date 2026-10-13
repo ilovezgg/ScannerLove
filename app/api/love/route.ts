@@ -5,6 +5,7 @@ import { authUserOrDev } from '@/lib/telegram-auth'
 import { canAccess, isSubscriber, isTester, type PaidFeature } from '@/lib/entitlements'
 import { MAX_CHAT_SHOTS, MAX_SCAN_PHOTOS, FREE_SCANS_PER_DAY } from '@/lib/pricing'
 import { kvIncr, kvIncrTtl, kvDecr, kvSpendOne, kvSet } from '@/lib/kv'
+import { reqLang, tr, type Lang } from '@/lib/i18n'
 
 // Потолок на суммарный размер картинок в запросе (символы base64). Клиент жмёт до ~1000px,
 // портрет весит 100-250 КБ, 5 скриншотов переписки до ~2 МБ. 4.4 МБ = лимит тела запроса на Vercel (4.5 МБ), больше всё равно не дойдёт.
@@ -92,9 +93,9 @@ function validate(j: any, minLen = 200): LoveResult {
 
 const PROVIDER_TIMEOUT_MS = 12_000
 
-async function fetchWithTimeout(label: string, url: string, init: RequestInit){
+async function fetchWithTimeout(label: string, url: string, init: RequestInit, timeoutMs = PROVIDER_TIMEOUT_MS){
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   const t0 = Date.now()
   try{
     const res = await fetch(url, { ...init, signal: controller.signal })
@@ -118,6 +119,7 @@ async function callGemini(model: string, prompt: string, photos: string[], max: 
   const key = process.env.GEMINI_API_KEY?.trim()
   if(!key) throw new Error("no GEMINI_API_KEY")
   if(!photos.length) throw new Error("no photos")
+  const thinks = model.startsWith("gemini-3")
 
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM }] },
@@ -128,18 +130,19 @@ async function callGemini(model: string, prompt: string, photos: string[], max: 
         ...photos.map(p => ({ inlineData: { mimeType: dataUrlMime(p), data: dataUrlToBase64(p) } })),
       ],
     }],
-    generationConfig: { temperature: 0.9, maxOutputTokens: max, responseMimeType: "application/json" },
+    // У 3.x «размышления» включены по умолчанию и съедают maxOutputTokens — без запаса JSON обрезается
+    generationConfig: { temperature: 0.9, maxOutputTokens: thinks ? max + 4000 : max, responseMimeType: "application/json" },
   }
 
   const res = await fetchWithTimeout(`gemini/${model}`, `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify(body),
-  })
+  }, thinks ? 20_000 : PROVIDER_TIMEOUT_MS)
   const raw = await res.text()
   if(!res.ok) throw new Error(`gemini ${res.status}: ${raw.slice(0,500)}`)
   const data = JSON.parse(raw)
-  const content = data?.candidates?.[0]?.content?.parts?.map((p:any)=>p.text||"").join("") || ""
+  const content = data?.candidates?.[0]?.content?.parts?.filter((p:any)=>!p.thought).map((p:any)=>p.text||"").join("") || ""
   const j = extractJson(content) ?? (()=>{ try{ return JSON.parse(content) }catch{ return null } })()
   return validate(j, minLen)
 }
@@ -220,6 +223,18 @@ function teaserContract(teaser?: string){
   return `\n\nОБЯЗАТЕЛЬНОЕ НАЧАЛО: читателю уже показали размытым первое предложение этого разбора, и он заплатил именно за его продолжение. Первый абзац первого блока шаблона обязан начинаться с этой фразы ДОСЛОВНО и естественно продолжать именно эту мысль, а не уводить в сторону:
 "${teaser}"`
 }
+
+// Промпты остаются русскими (их годами тюнили, и модель держит стиль лучше на исходнике), а язык
+// ответа задаёт этот хвост. Он идёт последним, потому что модели сильнее слушают конец промпта.
+const EN_OUTPUT = `
+
+OUTPUT LANGUAGE — ENGLISH (overrides everything above about language):
+Write every text value in the JSON ("full" and every "teasers" field) in natural, casual, modern English, the way a sharp friend texts — not a translation, not a horoscope.
+Translate the template headings into short English UPPERCASE headings with the same meaning and keep the same structure and order.
+Address the reader as "you", gender-neutral. Avoid AI filler: "chemistry", "dynamic", "it's worth noting", "overall", "delve", "testament".
+When quoting chat messages, keep the quotes in their original language.
+If a mandatory opening phrase is given above, it is already in the right language — start with it verbatim.
+All other rules (percent range, no verdicts about the absent person, JSON only) still apply.`
 
 function buildPrompt(
   type: string, safeExtra: string, salt: string, mode: Mode,
@@ -432,6 +447,9 @@ export async function POST(req: NextRequest){
   // человек не должен платить лимитом или кредитом за нашу поломку.
   let scanQuotaKey: string | null = null
   let convCreditKey: string | null = null
+  // До авторизации язык знаем только из x-lang; после неё уточняем по language_code.
+  let lang: Lang = reqLang(req)
+  const L = (ru: string, en: string) => tr(lang, ru, en)
   try{
     const body = await req.json()
     type = body?.type || "short"
@@ -452,33 +470,34 @@ export async function POST(req: NextRequest){
     const isImg = (p:any) => typeof p === "string" && p.startsWith("data:image/")
     let photos: string[] = Array.isArray(photosRaw) ? photosRaw.filter(isImg) : []
     if(!photos.length && isImg(photo1) && isImg(photo2)) photos = [photo1, photo2]
-    if(!photos.length) return NextResponse.json({ error: "Добавь фото заново" }, { status: 400 })
+    if(!photos.length) return NextResponse.json({ error: L("Добавь фото заново", "Please add the photos again") }, { status: 400 })
     if(photos.reduce((n,p)=>n+p.length,0) > MAX_PAYLOAD_CHARS){
-      return NextResponse.json({ error: "Фото слишком тяжёлые. Выбери другие или сделай скриншот поменьше." }, { status: 413 })
+      return NextResponse.json({ error: L("Фото слишком тяжёлые. Выбери другие или сделай скриншот поменьше.", "Photos are too large. Pick other ones or use a smaller screenshot.") }, { status: 413 })
     }
 
     // "chat" (до 5 картинок) допустим только для разбора переписки: иначе бесплатный скан
     // принимал пять картинок вместо трёх.
     const input: InputKind = ["two","joint","both","chat"].includes(inputRaw) ? inputRaw : "two"
     if(input === "chat" && type !== "conversation"){
-      return NextResponse.json({ error: "Неверный режим" }, { status: 400 })
+      return NextResponse.json({ error: L("Неверный режим", "Invalid mode") }, { status: 400 })
     }
     const limit = input === "chat" ? MAX_CHAT_SHOTS : MAX_SCAN_PHOTOS
     if(photos.length > limit){
-      return NextResponse.json({ error: `Слишком много изображений: максимум ${limit}` }, { status: 400 })
+      return NextResponse.json({ error: L(`Слишком много изображений: максимум ${limit}`, `Too many images: ${limit} max`) }, { status: 400 })
     }
     if(input === "joint" && photos.length !== 1) photos = photos.slice(0,1)
     if(input === "two" && photos.length < 2){
-      return NextResponse.json({ error: "Для режима «по отдельности» нужны два фото" }, { status: 400 })
+      return NextResponse.json({ error: L("Для режима «по отдельности» нужны два фото", "Two separate photos are needed for this mode") }, { status: 400 })
     }
 
     // 2. Кто спрашивает
     const user = authUserOrDev(req)
+    lang = reqLang(req, user)
 
     // 3. Права. Раньше этой проверки не было вообще — любой мог получить
     //    платный разбор, просто позвав роут с type:"deep".
     if(PAID_TYPES.includes(type as PaidFeature)){
-      if(!user) return NextResponse.json({ error: "Открой приложение через бота" }, { status: 401 })
+      if(!user) return NextResponse.json({ error: L("Открой приложение через бота", "Open the app through the bot") }, { status: 401 })
 
       if(!isTester(user.id)){
         if(type === "conversation"){
@@ -490,14 +509,14 @@ export async function POST(req: NextRequest){
           if(!sub){
             const key = `conv_credit:${user.id}`
             if(await kvSpendOne(key) === null){
-              return NextResponse.json({ error: "Разбор переписки не оплачен" }, { status: 402 })
+              return NextResponse.json({ error: L("Разбор переписки не оплачен", "Chat analysis is not paid yet") }, { status: 402 })
             }
             convCreditKey = key
           }
         } else {
           const access = await canAccess(user.id, scanId, type as PaidFeature)
           if(!access.ok){
-            return NextResponse.json({ error: "Этот разбор не оплачен", reason: access.reason }, { status: 402 })
+            return NextResponse.json({ error: L("Этот разбор не оплачен", "This reading is not paid yet"), reason: access.reason }, { status: 402 })
           }
         }
       }
@@ -509,14 +528,14 @@ export async function POST(req: NextRequest){
     // и «безлимитные сканы» в ней наконец что-то значат.
     if(type==="seasonal"){
       if(!eventId || !isEventCurrentlyActive(eventId)){
-        return NextResponse.json({ error: "Этот разбор сейчас недоступен — ивент закончился или ещё не начался" }, { status: 403 })
+        return NextResponse.json({ error: L("Этот разбор сейчас недоступен — ивент закончился или ещё не начался", "This reading is not available right now: the event is over or hasn't started") }, { status: 403 })
       }
     }
 
     // seasonal тоже идёт через этот лимит: раньше у него не было ни авторизации, ни счётчика,
     // и с 7 февраля он открылся бы всем даром.
     if(type==="short" || type==="seasonal"){
-      if(!user) return NextResponse.json({ error: "Открой приложение через бота" }, { status: 401 })
+      if(!user) return NextResponse.json({ error: L("Открой приложение через бота", "Open the app through the bot") }, { status: 401 })
       if(!isTester(user.id) && !(await isSubscriber(user.id))){
         const day = new Date().toISOString().slice(0,10)
         const key = `rl:scan:${user.id}:${day}`
@@ -526,7 +545,7 @@ export async function POST(req: NextRequest){
           scanQuotaKey = null
           await kvDecr(key).catch(()=>{})
           return NextResponse.json({
-            error: `На сегодня ${FREE_SCANS_PER_DAY} бесплатных сканов закончились. Завтра будут новые, а подписка «Архив» снимает лимит.`,
+            error: L(`На сегодня ${FREE_SCANS_PER_DAY} бесплатных сканов закончились. Завтра будут новые, а подписка «Архив» снимает лимит.`, `You've used all ${FREE_SCANS_PER_DAY} free scans for today. New ones tomorrow, or get Archive for unlimited scans.`),
           }, { status: 429 })
         }
       }
@@ -536,8 +555,10 @@ export async function POST(req: NextRequest){
     const safeExtra = (extra||"").slice(0,700)
     const safeMode: Mode = ["couple","crush","friend"].includes(mode) ? mode : "couple"
     const safeTeaser = typeof teaser === "string" ? teaser.slice(0,200) : ""
-    const prompt = buildPrompt(type, safeExtra, salt, safeMode, input, photos.length, eventId, mood, safeTeaser)
-    if(!prompt) return NextResponse.json({ error: "unknown type" }, { status: 400 })
+    const basePrompt = buildPrompt(type, safeExtra, salt, safeMode, input, photos.length, eventId, mood, safeTeaser)
+    if(!basePrompt) return NextResponse.json({ error: "unknown type" }, { status: 400 })
+
+    const prompt = basePrompt + (lang === "en" ? EN_OUTPUT : "")
 
     const maxTokens =
       type==="conversation" ? 2600 :
@@ -547,6 +568,9 @@ export async function POST(req: NextRequest){
     const minLen = type==="short" ? 80 : (type==="custom" ? 150 : 200)
 
     const attempts: Array<()=>Promise<LoveResult>> = [
+      // 2.5 Google держит только для старых ключей и может снять в любой момент — первыми идут 3.x
+      ()=>callGemini("gemini-3.8-flash", prompt, photos, maxTokens, minLen),
+      ()=>callGemini("gemini-3.5-flash-lite", prompt, photos, maxTokens, minLen),
       ()=>callGemini("gemini-2.5-flash", prompt, photos, maxTokens, minLen),
       ()=>callGemini("gemini-2.5-flash-lite", prompt, photos, maxTokens, minLen),
       ()=>callOR("google/gemini-2.5-flash", prompt, photos, maxTokens, minLen),
@@ -582,6 +606,6 @@ export async function POST(req: NextRequest){
     // Раньше для бесплатного скана тут отдавался выдуманный percent:84 и клиент показывал
     // его как настоящий результат. Теперь честная ошибка без percent и full: клиент не
     // может спутать её с разбором.
-    return NextResponse.json({ error: "Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту, лимит не потрачен." }, { status: 503 })
+    return NextResponse.json({ error: L("Сервис перегружен и не смог разобрать фото. Попробуй ещё раз через минуту, лимит не потрачен.", "The service is overloaded and couldn't read the photos. Try again in a minute, your limit wasn't used.") }, { status: 503 })
   }
 }

@@ -2,7 +2,8 @@
 // ПОЛОЖИТЬ СЮДА: app/page.tsx
 import { useState, useEffect, useRef } from "react"
 import { InviteBanner, InvitePartnerButton, InviteFriendsButton, ComparisonScreen } from "./components/InviteFlow"
-import { getActiveEvent } from "@/lib/events"
+import { getActiveEvent, eventText } from "@/lib/events"
+import { clientLang, tr, type Lang } from "@/lib/i18n"
 import { PRICES, off, MAX_CHAT_SHOTS } from "@/lib/pricing"
 import { appLink, shareLink } from "@/lib/links"
 
@@ -55,6 +56,7 @@ async function api(path: string, opts: RequestInit = {}){
     headers: {
       "Content-Type": "application/json",
       "x-telegram-init-data": initData(),
+      "x-lang": clientLang(),
       ...(opts.headers || {}),
     },
   })
@@ -165,26 +167,67 @@ function CountUp({value}:{value:number}){
   return <>{n}</>
 }
 
-const LETTERS = [
-  { name:"Влюбленные", title:"Выбор сердца", text:"Сегодня вас тянет друг к другу. Он думает о тебе, когда не пишет." },
-  { name:"Солнце", title:"Тепло вдвоем", text:"Вы как power couple. Вас видят вместе даже когда вы порознь." },
-  { name:"Звезда", title:"Надежда", text:"Кто-то из вас влюбился сильнее и боится спугнуть." },
-]
+const LETTERS: Record<Lang, { name:string, title:string, text:string }[]> = {
+  ru: [
+    { name:"Влюбленные", title:"Выбор сердца", text:"Сегодня вас тянет друг к другу. Он думает о тебе, когда не пишет." },
+    { name:"Солнце", title:"Тепло вдвоем", text:"Вы как power couple. Вас видят вместе даже когда вы порознь." },
+    { name:"Звезда", title:"Надежда", text:"Кто-то из вас влюбился сильнее и боится спугнуть." },
+  ],
+  en: [
+    { name:"The Lovers", title:"Heart's choice", text:"You're pulled toward each other today. They think about you even when they don't text." },
+    { name:"The Sun", title:"Warm together", text:"Total power couple energy. People see you as a pair even when you're apart." },
+    { name:"The Star", title:"Hope", text:"One of you fell harder and is afraid of scaring the other off." },
+  ],
+}
 
 type Mode = "couple" | "crush" | "friend"
 type InputKind = "two" | "joint" | "both"
 type Feature = "deep"|"hidden"|"future"|"custom"
 
-const MODES: { id: Mode, label: string, sub: string }[] = [
-  { id:"couple", label:"Пара",  sub:"уже вместе" },
-  { id:"crush",  label:"Краш",  sub:"ещё не пара" },
-  { id:"friend", label:"Друг",  sub:"без романтики" },
-]
+const MODES: Record<Lang, { id: Mode, label: string, sub: string }[]> = {
+  ru: [
+    { id:"couple", label:"Пара",  sub:"уже вместе" },
+    { id:"crush",  label:"Краш",  sub:"ещё не пара" },
+    { id:"friend", label:"Друг",  sub:"без романтики" },
+  ],
+  en: [
+    { id:"couple", label:"Couple", sub:"already together" },
+    { id:"crush",  label:"Crush",  sub:"not yet a couple" },
+    { id:"friend", label:"Friend", sub:"no romance" },
+  ],
+}
 
 /* Формулировка про измены заменена намеренно. Прежний вариант просил у
    модели вердикт о человеке, которого нет в разговоре: такой ответ нельзя
    ни подтвердить, ни отозвать, и именно после него приходили возвраты.
    Тревога осталась той же, но теперь вопрос про наблюдаемое поведение. */
+const SUGGESTED_QUESTIONS_EN: Record<Mode, string[]> = {
+  couple: [
+    "What do they really feel about me?",
+    "Should we get married?",
+    "Why has it felt cold between us lately?",
+    "What are they thinking but not saying?",
+    "Why are they pulling away lately?",
+    "How do I keep this relationship going?",
+  ],
+  crush: [
+    "Do they even notice me?",
+    "Should I make the first move?",
+    "What do they think of me?",
+    "Do I have a chance?",
+    "Why don't they reply right away?",
+    "Are they into me or just being polite?",
+  ],
+  friend: [
+    "Can I trust this person?",
+    "Do they see me as a close friend?",
+    "Should we start a project together?",
+    "What do they really think of me?",
+    "Why do we talk less lately?",
+    "Should I bring them into big plans?",
+  ],
+}
+
 const SUGGESTED_QUESTIONS: Record<Mode, string[]> = {
   couple: [
     "Что он(а) на самом деле ко мне чувствует?",
@@ -212,17 +255,24 @@ const SUGGESTED_QUESTIONS: Record<Mode, string[]> = {
   ],
 }
 
-function pickQuestions(mode: Mode, seed: number){
-  const pool = SUGGESTED_QUESTIONS[mode]
+function pickQuestions(mode: Mode, seed: number, lang: Lang){
+  const pool = (lang==="en" ? SUGGESTED_QUESTIONS_EN : SUGGESTED_QUESTIONS)[mode]
   const start = seed % pool.length
   return [...pool.slice(start), ...pool.slice(0, start)].slice(0, 4)
 }
 
-const MOOD_OPTIONS = [
-  { id:"up", label:"На подъёме" }, { id:"calm", label:"Спокойно" },
-  { id:"tired", label:"Устал(а)" }, { id:"anxious", label:"Тревожно" },
-  { id:"sad", label:"Грустновато" },
-]
+const MOOD_OPTIONS: Record<Lang, { id:string, label:string }[]> = {
+  ru: [
+    { id:"up", label:"На подъёме" }, { id:"calm", label:"Спокойно" },
+    { id:"tired", label:"Устал(а)" }, { id:"anxious", label:"Тревожно" },
+    { id:"sad", label:"Грустновато" },
+  ],
+  en: [
+    { id:"up", label:"Feeling great" }, { id:"calm", label:"Calm" },
+    { id:"tired", label:"Tired" }, { id:"anxious", label:"Anxious" },
+    { id:"sad", label:"A bit down" },
+  ],
+}
 
 function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number){
   const words = text.split(" ")
@@ -238,14 +288,29 @@ function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, 
 
 // Запасные тизеры. Используются ТОЛЬКО если модель почему-то не вернула
 // настоящие — тогда лучше показать нейтральную заглушку, чем пустоту.
-const FALLBACK_TEASER: Record<Feature,string> = {
-  deep:   "Разбор начинается с того, что видно на фото раньше всего…",
-  hidden: "Первое, что выдаёт настроение — это даже не лицо…",
-  future: "Если смотреть трезво, ключевой момент прячется не там…",
-  custom: "Ответ начинается с самого неудобного…",
+const FALLBACK_TEASER: Record<Lang, Record<Feature,string>> = {
+  ru: {
+    deep:   "Разбор начинается с того, что видно на фото раньше всего…",
+    hidden: "Первое, что выдаёт настроение — это даже не лицо…",
+    future: "Если смотреть трезво, ключевой момент прячется не там…",
+    custom: "Ответ начинается с самого неудобного…",
+  },
+  en: {
+    deep:   "The reading starts with what jumps out of the photo first…",
+    hidden: "The first thing that gives the mood away isn't even the face…",
+    future: "Looking at it honestly, the key moment isn't where you'd expect…",
+    custom: "The answer starts with the most awkward part…",
+  },
 }
 
 export default function Page(){
+  /* ── язык ──
+     null до монтирования: на сервере Telegram не виден, и без этого англоязычный
+     видел бы кадр на русском. Рендер ждёт определения языка (см. конец компонента). */
+  const [lang,setLang]=useState<Lang|null>(null)
+  const lg: Lang = lang ?? "ru"
+  const L = (ru: string, en: string) => tr(lg, ru, en)
+
   /* ── ввод ── */
   const [inputKind,setInputKind]=useState<InputKind>("two")
   const [p1,setP1]=useState(""); const [p2,setP2]=useState(""); const [pJoint,setPJoint]=useState("")
@@ -259,7 +324,8 @@ export default function Page(){
   const [viewingHistoryScan,setViewingHistoryScan]=useState(false)
 
   const [sealBroken,setSealBroken]=useState(false)
-  const [daily,setDaily]=useState(LETTERS[0])
+  const [dailyIdx,setDailyIdx]=useState(0)
+  const daily = LETTERS[lg][dailyIdx]
   const [sharing,setSharing]=useState(false)
 
   const [myUserId,setMyUserId]=useState<string|null>(null)
@@ -331,7 +397,10 @@ export default function Page(){
   },[])
 
   useEffect(()=>{
-    setDaily(LETTERS[Math.floor(Math.random()*LETTERS.length)])
+    const l = clientLang()
+    setLang(l)
+    document.documentElement.lang = l
+    setDailyIdx(Math.floor(Math.random()*LETTERS.ru.length))
     const tg = tgApp()
     const userId = tg?.initDataUnsafe?.user?.id
     if(!userId) return
@@ -450,17 +519,17 @@ export default function Page(){
         teaser: teasers[feature] || "",
       })
       if(status===402){
-        setResults(r=>({...r,[feature]:"Оплата ещё не подтвердилась. Подожди пару секунд и нажми ещё раз."}))
+        setResults(r=>({...r,[feature]:L("Оплата ещё не подтвердилась. Подожди пару секунд и нажми ещё раз.","Payment isn't confirmed yet. Wait a couple of seconds and tap again.")}))
       } else if(status!==200 || !data.full){
         // Не сохраняем через /api/scan/result — не подменяем настоящий платный
         // разбор заглушкой. Повторный тап бесплатен: фича уже открыта на сервере.
-        setResults(r=>({...r,[feature]:"Не получилось собрать разбор. Попробуй ещё раз — повторно платить не нужно."}))
+        setResults(r=>({...r,[feature]:L("Не получилось собрать разбор. Попробуй ещё раз — повторно платить не нужно.","Couldn't put the reading together. Try again, you won't be charged twice.")}))
       } else {
         setResults(r=>({...r,[feature]:data.full}))
         if(scanId) post("/api/scan/result",{scanId, feature, text:data.full}).catch(()=>{})
       }
     }catch{
-      setResults(r=>({...r,[feature]:"Сеть подвела. Попробуй ещё раз."}))
+      setResults(r=>({...r,[feature]:L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")}))
     }
     setBusy(b=>({...b,[feature]:false}))
   }
@@ -470,8 +539,8 @@ export default function Page(){
     setSeasonalLoad(true)
     try{
       const { data } = await post("/api/love",{ photos:photosForScan(), input:effectiveInput(), type:"seasonal", mode, eventId:activeEvent.id, scanId })
-      setSeasonalRes(data.full || "Не получилось. Попробуй ещё раз.")
-    }catch{ setSeasonalRes("Не получилось. Попробуй ещё раз.") }
+      setSeasonalRes(data.full || L("Не получилось. Попробуй ещё раз.","Didn't work. Try again."))
+    }catch{ setSeasonalRes(L("Не получилось. Попробуй ещё раз.","Didn't work. Try again.")) }
     setSeasonalLoad(false)
   }
 
@@ -527,7 +596,7 @@ export default function Page(){
   /* ── покупка ── */
   const buy = async (feature: Feature|"bundle"|"seasonal"|"conversation"|"sub") => {
     const tg = tgApp()
-    if(!tg){ notify("Открой приложение через бота"); return }
+    if(!tg){ notify(L("Открой приложение через бота","Open the app through the bot")); return }
     tg.ready()
 
     // Бесплатный кредит с колеса — оплату минуем целиком.
@@ -537,12 +606,12 @@ export default function Page(){
     if(feature==="custom" && hasFreeCustomCredit && scanId){
       const { data } = await post("/api/scan/unlock",{ scanId, feature:"custom", source:"credit" })
       if(data?.ok){ setHasFreeCustomCredit(false); applyUnlock("custom"); return }
-      notify("Бесплатный разбор уже использован", ()=>setHasFreeCustomCredit(false))
+      notify(L("Бесплатный разбор уже использован","The free reading is already used"), ()=>setHasFreeCustomCredit(false))
       return
     }
 
     const needsScan = feature!=="sub" && feature!=="conversation" && feature!=="seasonal"
-    if(needsScan && !scanId){ notify("Сначала сделай скан"); return }
+    if(needsScan && !scanId){ notify(L("Сначала сделай скан","Do a scan first")); return }
 
     setWaiting(feature)
     try{
@@ -551,8 +620,8 @@ export default function Page(){
         scanId: needsScan ? scanId : undefined,
         eventId: feature==="seasonal" ? activeEvent?.id : undefined,
       })
-      if(status===409){ await refreshSubscription(); setWaiting(null); notify("Подписка уже активна"); return }
-      if(!data.invoiceLink){ setWaiting(null); notify("Оплата не открылась: "+(data.error||"нет ссылки")); return }
+      if(status===409){ await refreshSubscription(); setWaiting(null); notify(L("Подписка уже активна","Your subscription is already active")); return }
+      if(!data.invoiceLink){ setWaiting(null); notify(L("Оплата не открылась: ","Payment didn't open: ")+(data.error||L("нет ссылки","no link"))); return }
 
       tg.openInvoice(data.invoiceLink, async (s: string)=>{
         if(s!=="paid"){ setWaiting(null); return }
@@ -574,7 +643,7 @@ export default function Page(){
 
         const ok = await waitForUnlock(feature)
         if(ok) applyUnlock(feature)
-        else notify("Оплата прошла, но подтверждение задерживается. Открой историю сканов через минуту — разбор будет там.")
+        else notify(L("Оплата прошла, но подтверждение задерживается. Открой историю сканов через минуту — разбор будет там.","Payment went through but confirmation is slow. Open scan history in a minute, the reading will be there."))
         setWaiting(null)
       })
     }catch(e:any){ setWaiting(null); notify(e.message) }
@@ -590,13 +659,13 @@ export default function Page(){
       setRefCredits(data.remaining ?? refCredits-1)
       applyUnlock(feature)
     } else {
-      notify("Бесплатных разборов не осталось", ()=>setRefCredits(0))
+      notify(L("Бесплатных разборов не осталось","No free readings left"), ()=>setRefCredits(0))
     }
   }
 
   /* ── скан ── */
   const check = async () => {
-    if(!photosReady) return notify(inputKind==="joint" ? "Добавь совместное фото" : "Нужны оба фото")
+    if(!photosReady) return notify(inputKind==="joint" ? L("Добавь совместное фото","Add a photo of you together") : L("Нужны оба фото","Both photos are needed"))
     setLoad(true)
     try{
       const salt = Date.now()+"_"+Math.random().toString(36).slice(2)
@@ -609,7 +678,7 @@ export default function Page(){
       // Раньше рисовалось то, что вернул сервер, включая выдуманный процент.
       if(status!==200 || typeof data?.percent!=="number"){
         setLoad(false)
-        return notify(data?.error || "Скан не удался. Попробуй ещё раз.")
+        return notify(data?.error || L("Скан не удался. Попробуй ещё раз.","Scan failed. Try again."))
       }
 
       setRes({ percent:data.percent, full:data.full })
@@ -638,7 +707,7 @@ export default function Page(){
         })
         // Не сохранился скан — оплата письма потом не найдёт его (webhook кидает «scan not found»).
         // Лучше сказать сразу, чем брать деньги за то, что не откроется.
-        if(saved.status!==200) notify("Скан не сохранился, покупки для него пока недоступны. Попробуй просканировать ещё раз.")
+        if(saved.status!==200) notify(L("Скан не сохранился, покупки для него пока недоступны. Попробуй просканировать ещё раз.","The scan wasn't saved, so purchases for it aren't available. Try scanning again."))
         if(referrerId && !refCredited){
           post("/api/invite/complete",{referrerId})
             .then(r=>{ if(r.status===200) setRefCredited(true) })   // при сбое повторим на следующем скане
@@ -646,7 +715,7 @@ export default function Page(){
         }
       }
     }catch{
-      notify("Скан не удался. Проверь связь и попробуй ещё раз.")
+      notify(L("Скан не удался. Проверь связь и попробуй ещё раз.","Scan failed. Check your connection and try again."))
     }
     setLoad(false)
   }
@@ -659,10 +728,10 @@ export default function Page(){
       const { status, data } = await post("/api/love",{
         photos: chatShots, input:"chat", type:"conversation", mode,
       })
-      if(status===402){ setConvRes("Оплата ещё не подтвердилась, подожди пару секунд.") }
-      else setConvRes(data.full || "Не получилось разобрать переписку. Попробуй ещё раз.")
+      if(status===402){ setConvRes(L("Оплата ещё не подтвердилась, подожди пару секунд.","Payment isn't confirmed yet, wait a couple of seconds.")) }
+      else setConvRes(data.full || L("Не получилось разобрать переписку. Попробуй ещё раз.","Couldn't read the chat. Try again."))
       refreshSubscription()
-    }catch{ setConvRes("Сеть подвела. Попробуй ещё раз.") }
+    }catch{ setConvRes(L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")) }
     setConvLoad(false)
   }
 
@@ -726,8 +795,10 @@ export default function Page(){
         setWheelPrize(data.prize); setWheelSpunToday(true)
         playSound("coin"); haptic("success")
         if(data.prize.prizeId==="free_custom") setHasFreeCustomCredit(true)
-      }
-    }catch{}
+        // Кредит сервер уже начислил, но без этого кнопка «Забрать» появлялась только после перезапуска.
+        if(data.prize.prizeId==="ref_credit" && !data.alreadySpun) setRefCredits(c=>c+1)
+      } else notify(L("Колесо не докрутилось. Попробуй ещё раз чуть позже.","The wheel got stuck. Try again a bit later."))
+    }catch{ notify(L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")) }
     setWheelSpinning(false)
   }
 
@@ -765,20 +836,20 @@ export default function Page(){
       ctx.strokeStyle="rgba(233,199,123,0.22)"; ctx.lineWidth=2; ctx.strokeRect(56,56,968,1238)
       ctx.textAlign="center"
       ctx.fillStyle="rgba(244,239,231,0.55)"; ctx.font="500 28px 'JetBrains Mono', monospace"
-      ctx.fillText("L O V E   S C A N N E R   ·   А Р Х И В   № 1 7", 540, 160)
+      ctx.fillText(L("L O V E   S C A N N E R   ·   А Р Х И В   № 1 7","L O V E   S C A N N E R   ·   A R C H I V E   № 1 7"), 540, 160)
       ctx.fillStyle="#C1272D"; ctx.font="italic 300px Georgia, serif"
       ctx.fillText(`${res.percent}%`, 540, 560)
       ctx.fillStyle="rgba(244,239,231,0.5)"; ctx.font="500 26px 'JetBrains Mono', monospace"
-      ctx.fillText("С О В М Е С Т И М О С Т Ь", 540, 626)
+      ctx.fillText(L("С О В М Е С Т И М О С Т Ь","C O M P A T I B I L I T Y"), 540, 626)
       ctx.fillStyle="#F4EFE7"; ctx.font="italic 300 42px Georgia, serif"
-      wrapCanvasText(ctx, `«${(res.full||"").slice(0,120).trim()}…»`, 540, 790, 800, 58)
+      wrapCanvasText(ctx, L("«","“")+(res.full||"").slice(0,120).trim()+L("…»","…”"), 540, 790, 800, 58)
       ctx.fillStyle="rgba(244,239,231,0.35)"; ctx.font="24px 'JetBrains Mono', monospace"
-      ctx.fillText("проверь свою → @lovescan_ai_bot", 540, 1240)
+      ctx.fillText(L("проверь свою → @lovescan_ai_bot","check yours → @lovescan_ai_bot"), 540, 1240)
 
       // Ссылка ведёт в приложение и несёт ref_<мой id>: человек, пришедший по ней, засчитается мне.
       // Раньше делились одной картинкой без ссылки, и вирусность была нулевой.
       const link = myUserId ? appLink(`ref_${myUserId}`) : appLink()
-      const shareText = `Наша совместимость ${res.percent}% 💘 Проверь свою: ${link}`
+      const shareText = L(`Наша совместимость ${res.percent}% 💘 Проверь свою: ${link}`, `We're a ${res.percent}% match 💘 Check yours: ${link}`)
 
       canvas.toBlob(async (blob)=>{
         if(!blob){ setSharing(false); return }
@@ -794,7 +865,7 @@ export default function Page(){
         // там никому не нужен, поэтому шлём в чат текст со ссылкой.
         const tg = tgApp()
         if(tg?.openTelegramLink){
-          tg.openTelegramLink(shareLink(link, `Наша совместимость ${res.percent}% 💘 Проверь свою`))
+          tg.openTelegramLink(shareLink(link, L(`Наша совместимость ${res.percent}% 💘 Проверь свою`, `We're a ${res.percent}% match 💘 Check yours`)))
           setSharing(false); return
         }
         const url=URL.createObjectURL(blob)
@@ -815,10 +886,10 @@ export default function Page(){
     const tg = tgApp()
     if(!canShareStory()) return
     const link = myUserId ? appLink(`ref_${myUserId}`) : appLink()
-    const media = `${window.location.origin}/api/og?p=${res.percent}&m=${mode}&l=ru&f=story`
+    const media = `${window.location.origin}/api/og?p=${res.percent}&m=${mode}&l=${lg}&f=story`
     try{
-      tg.shareToStory(media, { text: `Наша совместимость ${res.percent}% 💘`, widget_link: { url: link, name: "Проверить свою" } })
-    }catch{ notify("Не получилось открыть сторис. Попробуй обычное «Поделиться».") }
+      tg.shareToStory(media, { text: L(`Наша совместимость ${res.percent}% 💘`, `We're a ${res.percent}% match 💘`), widget_link: { url: link, name: L("Проверить свою","Check yours") } })
+    }catch{ notify(L("Не получилось открыть сторис. Попробуй обычное «Поделиться».","Couldn't open stories. Try the regular Share.")) }
   }
 
   /* ── стили ── */
@@ -863,7 +934,7 @@ export default function Page(){
         <div style={{position:"relative",width:"100%",height:"100%",transition:"transform .65s cubic-bezier(.4,.2,.2,1)",transformStyle:"preserve-3d",transform:flipping?"rotateY(180deg)":"rotateY(0deg)"}}>
           <div style={{position:"absolute",inset:0,borderRadius:R.md,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,overflow:"hidden",backfaceVisibility:"hidden",background:`linear-gradient(135deg, ${C.gold}1c, rgba(255,255,255,0.02))`,border:`1px solid ${C.gold}44`}}>
             <div className="seal" style={{width:38,height:38,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%, ${C.goldSoft}, ${C.gold} 55%, #a3822f)`,display:"flex",alignItems:"center",justifyContent:"center",color:C.goldInk}}><Ico n="spark" s={16}/></div>
-            <p className="mono" style={{fontSize:F.xs,color:C.ink50,letterSpacing:"0.06em"}}>Оплачено — нажми, чтобы вскрыть</p>
+            <p className="mono" style={{fontSize:F.xs,color:C.ink50,letterSpacing:"0.06em"}}>{L("Оплачено — нажми, чтобы вскрыть","Paid · tap to break the seal")}</p>
           </div>
           <div style={{position:"absolute",inset:0,borderRadius:R.md,backfaceVisibility:"hidden",transform:"rotateY(180deg)",background:"rgba(255,255,255,0.03)"}}/>
         </div>
@@ -875,13 +946,13 @@ export default function Page(){
      разбора, и при покупке оно уходит обратно в промпт как обязательное
      начало текста. Человек получает продолжение того, что видел. */
   function Teaser({feature}:{feature:Feature}){
-    const text = teasers[feature] || FALLBACK_TEASER[feature]
+    const text = teasers[feature] || FALLBACK_TEASER[lg][feature]
     return (
       <div style={{position:"relative",marginTop:12,height:72,overflow:"hidden"}}>
         <p className="ai-font teaser-veil" style={{fontSize:F.md}}>{text}</p>
         <div style={{position:"absolute",inset:0,display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:22}}>
           <span className="mono" style={{display:"inline-flex",alignItems:"center",gap:7,padding:"6px 12px",borderRadius:R.pill,background:"rgba(10,9,8,0.6)",border:`1px solid ${C.line}`,color:C.ink50,fontSize:F.xs,letterSpacing:"0.06em"}}>
-            <Ico n="lock" s={12}/> продолжение запечатано
+            <Ico n="lock" s={12}/> {L("продолжение запечатано","the rest is sealed")}
           </span>
         </div>
       </div>
@@ -889,21 +960,23 @@ export default function Page(){
   }
 
   const CARDS: {id:Feature, ico:IcoName, title:string, sub:string}[] = [
-    { id:"deep",   ico:"layers", title:"Глубокий разбор", sub:"Характеры, ред флаги, что делать" },
-    { id:"hidden", ico:"mask",   title:"Что не говорит",  sub:"Скрытые эмоции по языку тела" },
-    { id:"future", ico:"moon",   title:mode==="friend"?"Будущее дружбы":"Будущее пары", sub:mode==="friend"?"Останетесь ли близки":"Расстанетесь или вместе" },
-    { id:"custom", ico:"letter", title:"Свой вопрос",     sub:"Спроси что угодно про этих двоих" },
+    { id:"deep",   ico:"layers", title:L("Глубокий разбор","Deep reading"), sub:L("Характеры, ред флаги, что делать","Personalities, red flags, what to do") },
+    { id:"hidden", ico:"mask",   title:L("Что не говорит","What's unsaid"),  sub:L("Скрытые эмоции по языку тела","Hidden emotions in body language") },
+    { id:"future", ico:"moon",   title:mode==="friend"?L("Будущее дружбы","Future of your friendship"):L("Будущее пары","Your future together"), sub:mode==="friend"?L("Останетесь ли близки","Will you stay close"):L("Расстанетесь или вместе","Split up or stay together") },
+    { id:"custom", ico:"letter", title:L("Свой вопрос","Your question"),     sub:L("Спроси что угодно про этих двоих","Ask anything about these two") },
   ]
   const current = CARDS.find(c=>c.id===selectedCard)!
   const allThree = unlocked.deep && unlocked.hidden && unlocked.future
 
+  // вызывается как функция, а не <PhotoSlot/>: компонент, объявленный в рендере, перемонтируется
+  // на каждый setState, и SmartImg заново гасит/проявляет фото
   const PhotoSlot = ({img,onPick,label:lab,ratio="4/5"}:{img:string,onPick:(s:string)=>void,label:string,ratio?:string}) => (
     <label className="photo-card" style={{cursor:"pointer",display:"block"}}>
       <div style={{...glass,borderRadius:R.md,padding:7,border:img?`1px solid ${C.line}`:"1px dashed rgba(255,255,255,0.16)",boxShadow:img?"0 12px 30px rgba(0,0,0,0.4)":"none"}}>
         <div style={{width:"100%",aspectRatio:ratio,borderRadius:R.sm,overflow:"hidden",position:"relative",background:"rgba(255,255,255,0.025)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
           {img ? <SmartImg src={img}/> : <>
             <span style={{width:30,height:30,borderRadius:"50%",border:`1px solid ${C.line}`,display:"flex",alignItems:"center",justifyContent:"center",color:C.ink55}}><Ico n="plus" s={14}/></span>
-            <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>добавить</span>
+            <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>{L("добавить","add")}</span>
           </>}
           {load && img && <div className="scan-sweep"/>}
         </div>
@@ -912,6 +985,8 @@ export default function Page(){
       <input type="file" hidden accept="image/*" onChange={e=>{const f=e.target.files?.[0]; if(f) compressPhoto(f).then(onPick)}}/>
     </label>
   )
+
+  if(!lang) return null
 
   return (
     <>
@@ -976,27 +1051,27 @@ export default function Page(){
         {/* шапка */}
         <div className="reveal" style={{padding:`22px ${PAD}px 0`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <p className="mono" style={label}>Совместимость по фото</p>
+            <p className="mono" style={label}>{L("Совместимость по фото","Compatibility from photos")}</p>
             <div style={{display:"flex",alignItems:"center",gap:2,padding:3,borderRadius:R.pill,...glass}}>
               {(isFounder || subActive) && (
-                <div title={subActive?"Подписка активна":"Founder"} style={{width:32,height:32,borderRadius:R.pill,display:"flex",alignItems:"center",justifyContent:"center",color:C.gold,background:`${C.gold}1f`}}><Ico n="crown" s={15}/></div>
+                <div title={subActive?L("Подписка активна","Subscription active"):"Founder"} style={{width:32,height:32,borderRadius:R.pill,display:"flex",alignItems:"center",justifyContent:"center",color:C.gold,background:`${C.gold}1f`}}><Ico n="crown" s={15}/></div>
               )}
-              <IconBtn onClick={openLeaderboard} title="Лидерборд"><Ico n="trophy"/></IconBtn>
+              <IconBtn onClick={openLeaderboard} title={L("Лидерборд","Leaderboard")}><Ico n="trophy"/></IconBtn>
               <div style={{position:"relative"}}>
-                <IconBtn on={!wheelSpunToday} onClick={()=>setWheelOpen(true)} title="Колесо дня"><Ico n="wheel"/></IconBtn>
+                <IconBtn on={!wheelSpunToday} onClick={()=>setWheelOpen(true)} title={L("Колесо дня","Wheel of the day")}><Ico n="wheel"/></IconBtn>
                 {!wheelSpunToday && <span style={{position:"absolute",top:2,right:2,width:7,height:7,borderRadius:"50%",background:C.red,border:`1.5px solid ${C.bg}`}}/>}
               </div>
-              <IconBtn onClick={openHistory} title="История сканов"><Ico n="archive"/></IconBtn>
-              <IconBtn on={notifyOn} onClick={toggleNotify} title="Уведомления"><Ico n={notifyOn?"bell":"bellOff"}/></IconBtn>
-              <IconBtn on={soundOn} onClick={toggleSound} title="Звук"><Ico n={soundOn?"sound":"mute"}/></IconBtn>
+              <IconBtn onClick={openHistory} title={L("История сканов","Scan history")}><Ico n="archive"/></IconBtn>
+              <IconBtn on={notifyOn} onClick={toggleNotify} title={L("Уведомления","Notifications")}><Ico n={notifyOn?"bell":"bellOff"}/></IconBtn>
+              <IconBtn on={soundOn} onClick={toggleSound} title={L("Звук","Sound")}><Ico n={soundOn?"sound":"mute"}/></IconBtn>
             </div>
           </div>
           <h1 className="serif" style={{fontSize:F.hero,lineHeight:0.94,marginTop:14,letterSpacing:"-0.01em"}}>Love<br/><i>Scanner</i></h1>
-          <p className="ai-font" style={{fontSize:F.lg,color:C.ink70,marginTop:8}}>Загрузи два фото, и за 10 секунд узнаешь процент совместимости и что между вами.</p>
+          <p className="ai-font" style={{fontSize:F.lg,color:C.ink70,marginTop:8}}>{L("Загрузи два фото, и за 10 секунд узнаешь процент совместимости и что между вами.","Upload two photos and in 10 seconds see your compatibility score and what's really between you.")}</p>
           {!res && (
             <>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:16}}>
-                {[["1","Выбери, кто на фото"],["2","Добавь фото"],["3","Получи процент и разбор"]].map(([n,t])=>(
+                {[["1",L("Выбери, кто на фото","Pick who's in the photo")],["2",L("Добавь фото","Add photos")],["3",L("Получи процент и разбор","Get your score and reading")]].map(([n,t])=>(
                   <div key={n} style={{padding:"10px 8px",borderRadius:R.sm,...glass,textAlign:"center"}}>
                     <div className="serif" style={{fontSize:F.xl,color:C.gold,lineHeight:1}}>{n}</div>
                     <div className="mono" style={{fontSize:F.micro,color:C.ink55,marginTop:6,lineHeight:1.35}}>{t}</div>
@@ -1004,7 +1079,7 @@ export default function Page(){
                 ))}
               </div>
               <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12,lineHeight:1.5}}>
-                Это развлечение, а не диагноз. Фото уходят на разбор нейросети, подробности в <a href="/privacy" style={{color:C.ink70,textDecoration:"underline"}}>политике конфиденциальности</a>.
+                {L("Это развлечение, а не диагноз. Фото уходят на разбор нейросети, подробности в ","Just for fun, not a diagnosis. Photos are sent to an AI for analysis, details in the ")}<a href="/privacy" style={{color:C.ink70,textDecoration:"underline"}}>{L("политике конфиденциальности","privacy policy")}</a>.
               </p>
             </>
           )}
@@ -1014,15 +1089,16 @@ export default function Page(){
             Помечен как пример, чтобы не выдавать за настоящий скан. */}
         {!res && !p1 && !p2 && !pJoint && (
           <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:22,animationDelay:".03s"}}>
-            <Rule>Пример разбора</Rule>
+            <Rule>{L("Пример разбора","Sample reading")}</Rule>
             <div style={{...glass,borderRadius:R.md,padding:16,display:"flex",gap:14,alignItems:"center"}}>
               <div style={{flexShrink:0,textAlign:"center"}}>
                 <span className="serif" style={{fontSize:F.display,lineHeight:1,color:C.red}}>87%</span>
-                <div className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>МЭТЧ</div>
+                <div className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>{L("МЭТЧ","MATCH")}</div>
               </div>
               <p className="ai-font" style={{fontSize:F.md,color:C.ink70,lineHeight:1.45}}>
-                «Вы оба слегка наклонены друг к другу, а на совместном кадре плечи почти касаются. Это редкий признак, что рядом с человеком спокойно…»
-                <span className="mono" style={{display:"block",fontSize:F.micro,color:C.ink35,marginTop:6}}>Пример, не настоящий скан</span>
+                {L("«Вы оба слегка наклонены друг к другу, а на совместном кадре плечи почти касаются. Это редкий признак, что рядом с человеком спокойно…»",
+                   "“You both lean slightly toward each other, and in the joint shot your shoulders almost touch. That's a rare sign of feeling at ease with someone…”")}
+                <span className="mono" style={{display:"block",fontSize:F.micro,color:C.ink35,marginTop:6}}>{L("Пример, не настоящий скан","Sample, not a real scan")}</span>
               </p>
             </div>
           </div>
@@ -1030,9 +1106,9 @@ export default function Page(){
 
         {/* режим */}
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:26,animationDelay:".05s"}}>
-          <Rule>Кто на фото</Rule>
+          <Rule>{L("Кто на фото","Who's in the photo")}</Rule>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,padding:4,borderRadius:R.sm,...glass}}>
-            {MODES.map(m=>(
+            {MODES[lg].map(m=>(
               <button key={m.id} onClick={()=>{tapFx();setMode(m.id)}} className="unlock-btn" style={{borderRadius:R.sm-4,padding:"9px 4px",cursor:"pointer",textAlign:"center",border:"none",background:mode===m.id?`linear-gradient(135deg, ${C.red}, ${C.redDeep})`:"transparent",color:mode===m.id?"#fff":C.ink50}}>
                 <div className="serif" style={{fontSize:F.lg}}>{m.label}</div>
                 <div className="mono" style={{fontSize:F.micro,opacity:mode===m.id?.75:.6,marginTop:2}}>{m.sub}</div>
@@ -1044,9 +1120,9 @@ export default function Page(){
         {/* ФОТО — теперь два способа. Совместное фото несёт то, чего нет
             в отдельных портретах: дистанцию, касания, зеркаление поз. */}
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:24,animationDelay:".1s"}}>
-          <Rule>Фото</Rule>
+          <Rule>{L("Фото","Photos")}</Rule>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,padding:4,borderRadius:R.sm,...glass,marginBottom:12}}>
-            {([["two","По отдельности"],["joint","Вместе"]] as const).map(([k,lab])=>(
+            {([["two",L("По отдельности","Separately")],["joint",L("Вместе","Together")]] as const).map(([k,lab])=>(
               <button key={k} onClick={()=>{tapFx();setInputKind(k)}} className="unlock-btn mono" style={{borderRadius:R.sm-4,padding:"13px 4px",cursor:"pointer",border:"none",fontSize:F.sm,background:inputKind===k?"rgba(255,255,255,0.09)":"transparent",color:inputKind===k?C.ink:C.ink50}}>{lab}</button>
             ))}
           </div>
@@ -1054,19 +1130,19 @@ export default function Page(){
           {inputKind==="two" ? (
             <>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <PhotoSlot img={p1} onPick={setP1} label="Первый человек"/>
-                <PhotoSlot img={p2} onPick={setP2} label="Второй человек"/>
+                {PhotoSlot({img:p1,onPick:setP1,label:L("Первый человек","First person")})}
+                {PhotoSlot({img:p2,onPick:setP2,label:L("Второй человек","Second person")})}
               </div>
               {p1 && p2 && (
                 <div style={{marginTop:12}}>
                   {pJoint ? (
-                    <PhotoSlot img={pJoint} onPick={setPJoint} label="Совместное фото" ratio="16/10"/>
+                    PhotoSlot({img:pJoint,onPick:setPJoint,label:L("Совместное фото","Photo of you both"),ratio:"16/10"})
                   ) : (
                     <label className="unlock-btn" style={{display:"flex",alignItems:"center",gap:10,padding:"13px 16px",borderRadius:R.md,border:`1px dashed ${C.gold}55`,background:`${C.gold}0d`,cursor:"pointer",color:C.gold}}>
                       <Ico n="users" s={17}/>
                       <span style={{minWidth:0}}>
-                        <span className="mono" style={{fontSize:F.sm,display:"block"}}>Добавить совместное фото</span>
-                        <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:3}}>Разбор станет заметно точнее</span>
+                        <span className="mono" style={{fontSize:F.sm,display:"block"}}>{L("Добавить совместное фото","Add a photo of you two")}</span>
+                        <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:3}}>{L("Разбор станет заметно точнее","Makes the reading noticeably sharper")}</span>
                       </span>
                       <input type="file" hidden accept="image/*" onChange={e=>{const f=e.target.files?.[0]; if(f) compressPhoto(f).then(setPJoint)}}/>
                     </label>
@@ -1076,8 +1152,8 @@ export default function Page(){
             </>
           ) : (
             <>
-              <PhotoSlot img={pJoint} onPick={setPJoint} label="Оба человека в кадре" ratio="16/10"/>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,lineHeight:1.5}}>Одно фото, где вы вдвоём. По нему видно дистанцию, касания и то, кто к кому наклонён — этого не видно на отдельных портретах.</p>
+              {PhotoSlot({img:pJoint,onPick:setPJoint,label:L("Оба человека в кадре","Both people in one shot"),ratio:"16/10"})}
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,lineHeight:1.5}}>{L("Одно фото, где вы вдвоём. По нему видно дистанцию, касания и то, кто к кому наклонён — этого не видно на отдельных портретах.","One photo of you two. It shows distance, touch and who leans toward whom, which separate portraits can't.")}</p>
             </>
           )}
         </div>
@@ -1085,7 +1161,7 @@ export default function Page(){
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:16,animationDelay:".14s"}}>
           <button onClick={()=>{tapFx();check()}} disabled={load||!photosReady} className="cta" style={{width:"100%",height:56,borderRadius:R.pill,border:"none",cursor:photosReady?"pointer":"not-allowed",background:photosReady?`linear-gradient(120deg, ${C.red}, ${C.redDeep})`:"rgba(255,255,255,0.06)",color:photosReady?"#fff":C.ink35,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:photosReady?`0 12px 34px ${C.red}3d`:"none",opacity:load?.8:1}}>
             <span className="mono" style={{fontSize:F.sm,letterSpacing:"0.14em",textTransform:"uppercase",fontWeight:500}}>
-              {load ? <>Считываю кадры<Dots/></> : photosReady ? "Проверить совместимость" : (inputKind==="joint"?"Добавь совместное фото":"Добавь оба фото")}
+              {load ? <>{L("Считываю кадры","Reading the photos")}<Dots/></> : photosReady ? L("Проверить совместимость","Check compatibility") : (inputKind==="joint"?L("Добавь совместное фото","Add a photo of you two"):L("Добавь оба фото","Add both photos"))}
             </span>
             {!load && photosReady && <Ico n="spark" s={15}/>}
           </button>
@@ -1111,7 +1187,7 @@ export default function Page(){
                   </svg>
                   <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
                     <span className="serif" style={{fontSize:F.display,lineHeight:1}}><CountUp key={res.percent} value={res.percent}/>%</span>
-                    <span className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>МЭТЧ</span>
+                    <span className="mono" style={{fontSize:F.micro,letterSpacing:"0.16em",color:C.ink55,marginTop:2}}>{L("МЭТЧ","MATCH")}</span>
                   </div>
                 </div>
               </div>
@@ -1120,16 +1196,16 @@ export default function Page(){
 
               <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${C.lineSoft}`}}>
                 <p className="ai-font" style={{fontSize:F.md,color:C.ink70}}>
-                  {highChance ? "Процент высокий. В запечатанных письмах — что там думают на самом деле и как не спугнуть."
-                              : "Есть что подтянуть. В запечатанных письмах — конкретный план, а не догадки."}
+                  {highChance ? L("Процент высокий. В запечатанных письмах — что там думают на самом деле и как не спугнуть.","High score. The sealed letters say what they really think and how not to scare it off.")
+                              : L("Есть что подтянуть. В запечатанных письмах — конкретный план, а не догадки.","Room to grow. The sealed letters have a concrete plan, not guesses.")}
                 </p>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
                   <button onClick={()=>{tapFx();shareResult()}} disabled={sharing} className="unlock-btn mono" style={{height:38,padding:"0 15px",borderRadius:R.pill,border:`1px solid ${C.line}`,background:"rgba(255,255,255,0.06)",color:C.ink,fontSize:F.sm,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
-                    {sharing ? <>Собираю картинку<Dots/></> : <><Ico n="share" s={14}/> Поделиться</>}
+                    {sharing ? <>{L("Собираю картинку","Making the image")}<Dots/></> : <><Ico n="share" s={14}/> {L("Поделиться","Share")}</>}
                   </button>
                   {canShareStory() && (
                     <button onClick={()=>{tapFx();shareStory()}} className="unlock-btn mono" style={{height:38,padding:"0 15px",borderRadius:R.pill,border:`1px solid ${C.line}`,background:"rgba(255,255,255,0.06)",color:C.ink,fontSize:F.sm,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
-                      <Ico n="spark" s={14}/> В сторис
+                      <Ico n="spark" s={14}/> {L("В сторис","To story")}
                     </button>
                   )}
                   <InvitePartnerButton result={res} />
@@ -1137,16 +1213,16 @@ export default function Page(){
 
                 {similarItems===null ? (
                   <button onClick={()=>{tapFx();loadSimilar()}} disabled={similarLoading} className="unlock-btn mono" style={{marginTop:10,height:34,padding:"0 14px",borderRadius:R.pill,border:`1px solid ${C.lineSoft}`,background:"transparent",color:C.ink50,fontSize:F.xs,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
-                    {similarLoading ? <>Ищу похожие<Dots/></> : <><Ico n="eye" s={13}/> Что было у других с похожим %</>}
+                    {similarLoading ? <>{L("Ищу похожие","Looking for similar")}<Dots/></> : <><Ico n="eye" s={13}/> {L("Что было у других с похожим %","What others with a similar % got")}</>}
                   </button>
                 ) : similarItems.length>0 ? (
                   <div style={{marginTop:14}}>
-                    <p className="mono" style={{...label,marginBottom:8}}>Похожий процент у других</p>
+                    <p className="mono" style={{...label,marginBottom:8}}>{L("Похожий процент у других","Others with a similar score")}</p>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                       {similarItems.map((s,i)=><div key={i} className="ai-font" style={{fontSize:F.sm,color:C.ink70,borderLeft:`2px solid ${C.gold}55`,paddingLeft:12}}>{s}…</div>)}
                     </div>
                   </div>
-                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>Пока мало данных с похожим % — загляни позже</p>}
+                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>{L("Пока мало данных с похожим % — загляни позже","Not enough data for this % yet, check back later")}</p>}
               </div>
             </div>
           </div>
@@ -1154,7 +1230,7 @@ export default function Page(){
 
         {/* запечатанные письма */}
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:30,animationDelay:".18s"}}>
-          <Rule>Запечатанные письма</Rule>
+          <Rule>{L("Запечатанные письма","Sealed letters")}</Rule>
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {CARDS.map(c=>{
@@ -1165,7 +1241,7 @@ export default function Page(){
                     <Ico n={c.ico} s={18}/>{open && <Ico n="check" s={12}/>}
                   </span>
                   <div className="serif" style={{fontSize:F.lg,marginTop:9,lineHeight:1.1}}>{c.title}</div>
-                  <div className="mono" style={{fontSize:F.xs,marginTop:6,color:open?C.gold:C.ink55}}>{open?"открыто":`${PRICES[c.id].now} ✦`}</div>
+                  <div className="mono" style={{fontSize:F.xs,marginTop:6,color:open?C.gold:C.ink55}}>{open?L("открыто","open"):`${PRICES[c.id].now} ✦`}</div>
                 </button>
               )
             })}
@@ -1184,18 +1260,18 @@ export default function Page(){
                     </p>
                   )}
                   {selectedCard==="custom" && hasFreeCustomCredit && !unlocked.custom && (
-                    <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.gold}}>Приз с колеса — бесплатно</p>
+                    <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.gold}}>{L("Приз с колеса — бесплатно","Wheel prize · free")}</p>
                   )}
                 </div>
                 {!unlocked[selectedCard] ? (
                   <button onClick={()=>{tapFx();buy(selectedCard)}} disabled={waiting===selectedCard || !scanId} className="unlock-btn mono" style={{height:44,padding:"0 16px",borderRadius:R.pill,border:"none",cursor:scanId?"pointer":"not-allowed",background:`linear-gradient(135deg, ${C.red}, ${C.redDeep})`,color:"#fff",fontSize:F.sm,fontWeight:700,whiteSpace:"nowrap",flexShrink:0,opacity:scanId?1:0.45}}>
-                    {waiting===selectedCard ? <>Жду<Dots/></> : (selectedCard==="custom" && hasFreeCustomCredit ? "Открыть" : `${PRICES[selectedCard].now} ✦`)}
+                    {waiting===selectedCard ? <>{L("Жду","Waiting")}<Dots/></> : (selectedCard==="custom" && hasFreeCustomCredit ? L("Открыть","Open") : `${PRICES[selectedCard].now} ✦`)}
                   </button>
-                ) : <span className="mono shimmer-price" style={{fontSize:F.sm,fontWeight:700,paddingTop:6}}>Открыто</span>}
+                ) : <span className="mono shimmer-price" style={{fontSize:F.sm,fontWeight:700,paddingTop:6}}>{L("Открыто","Unlocked")}</span>}
               </div>
 
               {!scanId && !unlocked[selectedCard] && (
-                <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>Сначала сделай скан — письма пишутся под конкретные фото</p>
+                <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>{L("Сначала сделай скан — письма пишутся под конкретные фото","Do a scan first: letters are written for specific photos")}</p>
               )}
 
               {!unlocked[selectedCard] && scanId && <Teaser feature={selectedCard}/>}
@@ -1207,8 +1283,8 @@ export default function Page(){
               {/* deep */}
               {selectedCard==="deep" && unlocked.deep && opened.deep && (
                 <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
-                  {!viewingHistoryScan && <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder="Что между вами происходит? Пара фраз сделает разбор точнее." className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>}
-                  {!viewingHistoryScan && <button onClick={()=>{tapFx();generate("deep")}} disabled={busy.deep} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700}}><span className="mono" style={{fontSize:F.sm}}>{busy.deep ? <>Вскрываю<Dots/></> : (results.deep ? "Пересобрать с деталями" : "Вскрыть письмо")}</span></button>}
+                  {!viewingHistoryScan && <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder={L("Что между вами происходит? Пара фраз сделает разбор точнее.","What's going on between you? A couple of lines make the reading sharper.")} className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>}
+                  {!viewingHistoryScan && <button onClick={()=>{tapFx();generate("deep")}} disabled={busy.deep} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700}}><span className="mono" style={{fontSize:F.sm}}>{busy.deep ? <>{L("Вскрываю","Opening")}<Dots/></> : (results.deep ? L("Пересобрать с деталями","Redo with details") : L("Вскрыть письмо","Open the letter"))}</span></button>}
                   {busy.deep && !results.deep && <Skeleton h={78}/>}
                   {results.deep && <AnswerBox text={results.deep}/>}
                 </div>
@@ -1224,16 +1300,16 @@ export default function Page(){
               {selectedCard==="custom" && unlocked.custom && !opened.custom && (
                 <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:10}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <p className="mono" style={label}>Можно спросить так</p>
-                    <button onClick={()=>{tapFx();setChipSeed(s=>s+1)}} className="mono unlock-btn" style={{fontSize:F.xs,background:"none",border:"none",cursor:"pointer",color:C.gold,display:"inline-flex",alignItems:"center",gap:5}}><Ico n="refresh" s={12}/> другие</button>
+                    <p className="mono" style={label}>{L("Можно спросить так","You could ask")}</p>
+                    <button onClick={()=>{tapFx();setChipSeed(s=>s+1)}} className="mono unlock-btn" style={{fontSize:F.xs,background:"none",border:"none",cursor:"pointer",color:C.gold,display:"inline-flex",alignItems:"center",gap:5}}><Ico n="refresh" s={12}/> {L("другие","more")}</button>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {pickQuestions(mode,chipSeed).map((q,i)=>(
+                    {pickQuestions(mode,chipSeed,lg).map((q,i)=>(
                       <button key={i} onClick={()=>{tapFx();setCustomQuestion(q)}} className="unlock-btn ai-font" style={{textAlign:"left",padding:"10px 13px",borderRadius:R.sm,cursor:"pointer",fontSize:F.md,lineHeight:1.4,background:customQuestion===q?`${C.gold}1c`:"rgba(255,255,255,0.035)",border:customQuestion===q?`1px solid ${C.gold}77`:`1px solid ${C.lineSoft}`,color:customQuestion===q?C.ink:C.ink70}}>{q}</button>
                     ))}
                   </div>
-                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Или напиши свой вопрос" className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
-                  <button onClick={()=>{tapFx();setOpened(o=>({...o,custom:true}));generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>Задать вопрос</span></button>
+                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder={L("Или напиши свой вопрос","Or write your own question")} className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
+                  <button onClick={()=>{tapFx();setOpened(o=>({...o,custom:true}));generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{L("Задать вопрос","Ask")}</span></button>
                 </div>
               )}
               {selectedCard==="custom" && unlocked.custom && opened.custom && (
@@ -1241,8 +1317,8 @@ export default function Page(){
                   {busy.custom && !results.custom && <Skeleton h={78}/>}
                   {results.custom && <AnswerBox text={results.custom}/>}
                   {results.custom && !viewingHistoryScan && (<>
-                    <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder="Ещё вопрос" className="mono letter-area" style={{width:"100%",minHeight:52,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
-                    <button onClick={()=>{tapFx();generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:38,borderRadius:R.pill,border:`1px solid ${C.line}`,cursor:"pointer",background:"rgba(255,255,255,0.07)",color:C.ink,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy.custom ? <>Спрашиваю<Dots/></> : "Спросить ещё"}</span></button>
+                    <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder={L("Ещё вопрос","Another question")} className="mono letter-area" style={{width:"100%",minHeight:52,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
+                    <button onClick={()=>{tapFx();generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:38,borderRadius:R.pill,border:`1px solid ${C.line}`,cursor:"pointer",background:"rgba(255,255,255,0.07)",color:C.ink,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy.custom ? <>{L("Спрашиваю","Asking")}<Dots/></> : L("Спросить ещё","Ask again")}</span></button>
                   </>)}
                 </div>
               )}
@@ -1251,8 +1327,8 @@ export default function Page(){
             {!allThree && scanId && (
               <button onClick={()=>{tapFx();buy("bundle")}} disabled={waiting==="bundle"} className="unlock-btn" style={{marginTop:10,width:"100%",padding:"14px 18px",borderRadius:R.md,border:`1px solid ${C.gold}55`,cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}18, rgba(255,255,255,0.02))`,color:C.ink,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,textAlign:"left"}}>
                 <span>
-                  <span className="serif" style={{fontSize:F.xl,display:"block",lineHeight:1.1}}>Все три письма</span>
-                  <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:4}}><span className="strike">{PRICES.bundle.was} ✦</span> · экономия {off(PRICES.bundle)}% против трёх по отдельности</span>
+                  <span className="serif" style={{fontSize:F.xl,display:"block",lineHeight:1.1}}>{L("Все три письма","All three letters")}</span>
+                  <span className="mono" style={{fontSize:F.xs,color:C.ink50,display:"block",marginTop:4}}><span className="strike">{PRICES.bundle.was} ✦</span> · {L("экономия","save")} {off(PRICES.bundle)}% {L("против трёх по отдельности","vs. buying three separately")}</span>
                 </span>
                 <span className="mono" style={{flexShrink:0,padding:"11px 18px",borderRadius:R.pill,background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>{waiting==="bundle"?"…":`${PRICES.bundle.now} ✦`}</span>
               </button>
@@ -1266,19 +1342,20 @@ export default function Page(){
             <div style={{...glass,borderRadius:R.md,padding:16,border:`1px solid ${C.gold}55`,background:`linear-gradient(135deg, ${C.gold}12, rgba(255,255,255,0.02))`}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{color:C.gold,display:"flex"}}><Ico n="crown" s={18}/></span>
-                <p className="serif" style={{fontSize:F.xl}}>Архив открыт</p>
+                <p className="serif" style={{fontSize:F.xl}}>{L("Архив открыт","Archive is open")}</p>
               </div>
               <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:6,lineHeight:1.5}}>
-                Безлимитные сканы и все разборы{subUntil ? ` до ${new Date(subUntil).toLocaleDateString("ru-RU",{day:"2-digit",month:"long"})}` : ""}.
-                {subCancelled ? " Автопродление отключено." : " Продлится автоматически."}
+                {L("Безлимитные сканы и все разборы","Unlimited scans and all readings")}{subUntil ? ` ${L("до","until")} ${new Date(subUntil).toLocaleDateString(lg==="en"?"en-US":"ru-RU",{day:"2-digit",month:"long"})}` : ""}.
+                {subCancelled ? L(" Автопродление отключено."," Auto-renew is off.") : L(" Продлится автоматически."," Renews automatically.")}
               </p>
             </div>
           ) : (
             <div style={{...glass,borderRadius:R.md,padding:16,border:`1px solid ${C.gold}44`,background:`linear-gradient(135deg, ${C.gold}10, rgba(255,255,255,0.02))`}}>
-              <p className="mono" style={{...label,color:C.gold}}>Подписка</p>
-              <p className="serif" style={{fontSize:F.xxl,marginTop:7,lineHeight:1.05}}>Архив</p>
+              <p className="mono" style={{...label,color:C.gold}}>{L("Подписка","Subscription")}</p>
+              <p className="serif" style={{fontSize:F.xxl,marginTop:7,lineHeight:1.05}}>{L("Архив","Archive")}</p>
               <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:7}}>
-                {["Сканы без ограничений","Все письма открыты сразу","Разбор переписки включён","Новые фото не сбрасывают доступ"].map((t,i)=>(
+                {(lg==="en" ? ["Unlimited scans","All letters unlocked at once","Chat analysis included","New photos don't reset access"]
+                            : ["Сканы без ограничений","Все письма открыты сразу","Разбор переписки включён","Новые фото не сбрасывают доступ"]).map((t,i)=>(
                   <div key={i} style={{display:"flex",alignItems:"center",gap:9}}>
                     <span style={{color:C.gold,display:"flex",flexShrink:0}}><Ico n="check" s={13}/></span>
                     <span className="mono" style={{fontSize:F.sm,color:C.ink70}}>{t}</span>
@@ -1286,9 +1363,9 @@ export default function Page(){
                 ))}
               </div>
               <button onClick={()=>{tapFx();buy("sub")}} disabled={waiting==="sub"} className="unlock-btn mono" style={{marginTop:14,width:"100%",height:46,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>
-                {waiting==="sub" ? <>Оформляю<Dots/></> : `${PRICES.sub.now} ✦ в месяц`}
+                {waiting==="sub" ? <>{L("Оформляю","Setting up")}<Dots/></> : `${PRICES.sub.now} ✦ ${L("в месяц","per month")}`}
               </button>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,textAlign:"center"}}>Отменить можно в любой момент в Telegram</p>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:8,textAlign:"center"}}>{L("Отменить можно в любой момент в Telegram","Cancel anytime in Telegram")}</p>
             </div>
           )}
         </div>
@@ -1300,15 +1377,16 @@ export default function Page(){
               <div style={{minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:9}}>
                   <span style={{color:C.ink50,display:"flex"}}><Ico n="chat" s={18}/></span>
-                  <p className="serif" style={{fontSize:F.xl}}>Разбор переписки</p>
+                  <p className="serif" style={{fontSize:F.xl}}>{L("Разбор переписки","Chat analysis")}</p>
                 </div>
                 <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:5,lineHeight:1.5}}>
-                  До {MAX_CHAT_SHOTS} скриншотов. Кто вкладывается больше, где уходят от темы и что написать следующим сообщением.
+                  {L(`До ${MAX_CHAT_SHOTS} скриншотов. Кто вкладывается больше, где уходят от темы и что написать следующим сообщением.`,
+                     `Up to ${MAX_CHAT_SHOTS} screenshots. Who invests more, where they dodge, and what to text next.`)}
                 </p>
               </div>
               {!(subActive || convCredits>0) && (
                 <button onClick={()=>{tapFx();buy("conversation")}} disabled={waiting==="conversation"} className="unlock-btn mono" style={{height:38,padding:"0 16px",borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.red}, ${C.redDeep})`,color:"#fff",fontSize:F.sm,fontWeight:700,flexShrink:0}}>
-                  {waiting==="conversation" ? <>Жду<Dots/></> : `${PRICES.conversation.now} ✦`}
+                  {waiting==="conversation" ? <>{L("Жду","Waiting")}<Dots/></> : `${PRICES.conversation.now} ✦`}
                 </button>
               )}
             </div>
@@ -1331,14 +1409,14 @@ export default function Page(){
                   )}
                 </div>
                 <button onClick={()=>{tapFx();runConversation()}} disabled={!chatShots.length||convLoad} className="unlock-btn" style={{marginTop:12,width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:chatShots.length?1:0.45}}>
-                  <span className="mono" style={{fontSize:F.sm}}>{convLoad ? <>Читаю переписку<Dots/></> : "Разобрать"}</span>
+                  <span className="mono" style={{fontSize:F.sm}}>{convLoad ? <>{L("Читаю переписку","Reading the chat")}<Dots/></> : L("Разобрать","Analyze")}</span>
                 </button>
                 {convLoad && !convRes && <Skeleton h={90}/>}
                 {convRes && <AnswerBox text={convRes}/>}
               </div>
             ) : (
               <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12,lineHeight:1.5}}>
-                Скриншоты нужны только для разбора — они не сохраняются.
+                {L("Скриншоты нужны только для разбора — они не сохраняются.","Screenshots are used only for the analysis and aren't stored.")}
               </p>
             )}
           </div>
@@ -1348,10 +1426,10 @@ export default function Page(){
         {moodLoaded && !todayMood && (
           <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:14}}>
             <div style={{...glass,borderRadius:R.md,padding:16}}>
-              <p className="serif" style={{fontSize:F.xl}}>Как ты сегодня?</p>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:4}}>Учтём в разборе</p>
+              <p className="serif" style={{fontSize:F.xl}}>{L("Как ты сегодня?","How are you today?")}</p>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:4}}>{L("Учтём в разборе","We'll factor it into the reading")}</p>
               <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:7}}>
-                {MOOD_OPTIONS.map(m=>(
+                {MOOD_OPTIONS[lg].map(m=>(
                   <button key={m.id} onClick={()=>{tapFx();saveMood(m.id)}} disabled={moodSaving} className="unlock-btn mono" style={{padding:"8px 13px",borderRadius:R.pill,border:`1px solid ${C.lineSoft}`,background:"rgba(255,255,255,0.04)",color:C.ink70,fontSize:F.xs,cursor:"pointer"}}>{m.label}</button>
                 ))}
               </div>
@@ -1362,11 +1440,11 @@ export default function Page(){
         {activeEvent && (
           <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:14}}>
             <div style={{...glass,borderRadius:R.md,padding:16,border:`1px solid ${C.gold}44`,background:`linear-gradient(135deg, ${C.gold}12, rgba(255,255,255,0.02))`}}>
-              <p className="mono" style={{...label,color:C.gold}}>Лимитированный ивент</p>
-              <p className="serif" style={{fontSize:F.xl,marginTop:7}}>{activeEvent.title}</p>
-              <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:5,lineHeight:1.5}}>{activeEvent.bannerText}</p>
+              <p className="mono" style={{...label,color:C.gold}}>{L("Лимитированный ивент","Limited event")}</p>
+              <p className="serif" style={{fontSize:F.xl,marginTop:7}}>{eventText(activeEvent,lg).title}</p>
+              <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:5,lineHeight:1.5}}>{eventText(activeEvent,lg).bannerText}</p>
               {!seasonalUnlocked ? (
-                <button onClick={()=>{tapFx();buy("seasonal")}} disabled={!scanId} className="unlock-btn mono" style={{marginTop:14,width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm,opacity:scanId?1:0.45}}>{activeEvent.buttonLabel}</button>
+                <button onClick={()=>{tapFx();buy("seasonal")}} disabled={!scanId} className="unlock-btn mono" style={{marginTop:14,width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm,opacity:scanId?1:0.45}}>{eventText(activeEvent,lg).buttonLabel}</button>
               ) : !seasonalOpened ? (
                 <EnvelopeReveal onOpen={()=>{ setSeasonalOpened(true); checkSeasonal() }}/>
               ) : (<>
@@ -1382,10 +1460,10 @@ export default function Page(){
             {refCredits>0 ? (
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
                 <div>
-                  <p className="serif" style={{fontSize:F.lg}}>Приглашено: {refCount}</p>
-                  <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:3}}>Есть бесплатные разборы</p>
+                  <p className="serif" style={{fontSize:F.lg}}>{L("Приглашено","Invited")}: {refCount}</p>
+                  <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:3}}>{L("Есть бесплатные разборы","You have free readings")}</p>
                 </div>
-                <button onClick={()=>{tapFx();useReferralCredit("deep")}} disabled={!scanId} className="unlock-btn mono" style={{height:36,padding:"0 14px",borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontSize:F.xs,fontWeight:700,flexShrink:0,opacity:scanId?1:0.45}}>Забрать ({refCredits})</button>
+                <button onClick={()=>{tapFx();useReferralCredit("deep")}} disabled={!scanId} className="unlock-btn mono" style={{height:36,padding:"0 14px",borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontSize:F.xs,fontWeight:700,flexShrink:0,opacity:scanId?1:0.45}}>{L("Забрать","Claim")} ({refCredits})</button>
               </div>
             ) : <InviteFriendsButton count={refCount} toNextReward={refToNext} />}
           </div>
@@ -1395,15 +1473,15 @@ export default function Page(){
           <div className="seal-card" style={{position:"relative",width:"100%",height:148,cursor:"pointer",perspective:"1200px"}} onClick={()=>{tapFx();setSealBroken(!sealBroken)}}>
             <div style={{position:"relative",width:"100%",height:"100%",transition:"transform .7s cubic-bezier(.4,.2,.2,1)",transformStyle:"preserve-3d",transform:sealBroken?"rotateY(180deg)":"rotateY(0deg)"}}>
               <div style={{position:"absolute",inset:0,borderRadius:R.lg,padding:20,display:"flex",flexDirection:"column",justifyContent:"space-between",overflow:"hidden",backfaceVisibility:"hidden",...glass,boxShadow:"0 14px 40px rgba(0,0,0,0.45)"}}>
-                <p className="mono" style={label}>Письмо дня</p>
+                <p className="mono" style={label}>{L("Письмо дня","Letter of the day")}</p>
                 <div style={{paddingRight:64}}>
-                  <h2 className="serif" style={{fontSize:F.xxl,lineHeight:1.05}}>Что между<br/><i>вами на самом деле?</i></h2>
-                  <p className="mono" style={{fontSize:F.xs,marginTop:8,color:C.ink55}}>Нажми на печать</p>
+                  <h2 className="serif" style={{fontSize:F.xxl,lineHeight:1.05}}>{L("Что между","What's really")}<br/><i>{L("вами на самом деле?","between you?")}</i></h2>
+                  <p className="mono" style={{fontSize:F.xs,marginTop:8,color:C.ink55}}>{L("Нажми на печать","Tap the seal")}</p>
                 </div>
                 <div className="seal" style={{position:"absolute",right:18,top:"50%",transform:"translateY(-50%)",width:50,height:50,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%, ${C.redSoft}, ${C.red} 55%, ${C.redDeep})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Ico n="spark" s={20}/></div>
               </div>
               <div style={{position:"absolute",inset:0,borderRadius:R.lg,padding:20,display:"flex",flexDirection:"column",backfaceVisibility:"hidden",transform:"rotateY(180deg)",...glass,border:`1px solid ${C.red}44`,boxShadow:"0 14px 40px rgba(0,0,0,0.45)"}}>
-                <p className="mono" style={{...label,color:C.red}}>Вскрыто · {daily.name}</p>
+                <p className="mono" style={{...label,color:C.red}}>{L("Вскрыто","Opened")} · {daily.name}</p>
                 <h3 className="serif" style={{fontSize:F.xxl,marginTop:8,lineHeight:1.1}}>{daily.title}</h3>
                 <p className="ai-font" style={{fontSize:F.lg,marginTop:8,color:C.ink70}}>{daily.text}</p>
               </div>
@@ -1421,8 +1499,8 @@ export default function Page(){
       {wheelOpen && (
         <div onClick={()=>setWheelOpen(false)} style={{position:"fixed",inset:0,background:"rgba(6,5,5,0.72)",backdropFilter:"blur(6px)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"center",padding:PAD}}>
           <div className="reveal" onClick={e=>e.stopPropagation()} style={{width:340,maxWidth:"100%",...glass,background:C.bgRaised,borderRadius:R.lg,padding:26,textAlign:"center"}}>
-            <p className="serif" style={{fontSize:F.xxl}}>Колесо дня</p>
-            <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:5}}>Один раз в сутки, бесплатно</p>
+            <p className="serif" style={{fontSize:F.xxl}}>{L("Колесо дня","Wheel of the day")}</p>
+            <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:5}}>{L("Один раз в сутки, бесплатно","Once a day, free")}</p>
             <div style={{margin:"26px auto",width:124,height:124}}>
               <div style={{width:124,height:124,borderRadius:"50%",background:`conic-gradient(${C.red}, ${C.gold}, ${C.redDeep}, ${C.gold}, ${C.red})`,animation:wheelSpinning?"spin 1.4s cubic-bezier(.2,.8,.3,1)":"none",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 12px 34px rgba(0,0,0,0.5)"}}>
                 <div style={{width:72,height:72,borderRadius:"50%",background:C.bgRaised,display:"flex",alignItems:"center",justifyContent:"center",color:C.gold}}><Ico n="wheel" s={26}/></div>
@@ -1432,13 +1510,13 @@ export default function Page(){
               <div className="reveal">
                 <p className="ai-font" style={{fontSize:F.lg,padding:"0 6px"}}>{wheelPrize.label}</p>
                 {wheelPrize.prizeId==="free_custom" && hasFreeCustomCredit ? (
-                  <button onClick={()=>{tapFx();setSelectedCard("custom");setWheelOpen(false)}} className="unlock-btn mono" style={{marginTop:16,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>Забрать приз</button>
-                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12}}>Возвращайся завтра за новым призом</p>}
+                  <button onClick={()=>{tapFx();setSelectedCard("custom");setWheelOpen(false)}} className="unlock-btn mono" style={{marginTop:16,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm}}>{L("Забрать приз","Claim prize")}</button>
+                ) : <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12}}>{L("Возвращайся завтра за новым призом","Come back tomorrow for a new prize")}</p>}
               </div>
             ) : (
-              <button onClick={spinWheel} disabled={wheelSpinning} className="unlock-btn mono" style={{width:"100%",height:46,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm,opacity:wheelSpinning?0.7:1}}>{wheelSpinning ? <>Крутим<Dots/></> : "Крутить колесо"}</button>
+              <button onClick={spinWheel} disabled={wheelSpinning} className="unlock-btn mono" style={{width:"100%",height:46,borderRadius:R.pill,border:"none",cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft})`,color:C.goldInk,fontWeight:700,fontSize:F.sm,opacity:wheelSpinning?0.7:1}}>{wheelSpinning ? <>{L("Крутим","Spinning")}<Dots/></> : L("Крутить колесо","Spin the wheel")}</button>
             )}
-            <button onClick={()=>setWheelOpen(false)} className="mono unlock-btn" style={{marginTop:16,background:"none",border:"none",color:C.ink55,fontSize:F.xs,cursor:"pointer"}}>Закрыть</button>
+            <button onClick={()=>setWheelOpen(false)} className="mono unlock-btn" style={{marginTop:16,background:"none",border:"none",color:C.ink55,fontSize:F.xs,cursor:"pointer"}}>{L("Закрыть","Close")}</button>
           </div>
         </div>
       )}
@@ -1449,14 +1527,14 @@ export default function Page(){
           <div className="reveal" onClick={e=>e.stopPropagation()} style={{width:420,maxWidth:"100%",maxHeight:"78vh",overflowY:"auto",...glass,background:C.bgRaised,borderRadius:`${R.lg}px ${R.lg}px 0 0`,padding:`10px ${PAD}px calc(${PAD}px + env(safe-area-inset-bottom))`}}>
             <div style={{width:36,height:4,borderRadius:R.pill,background:"rgba(255,255,255,0.16)",margin:"0 auto 16px"}}/>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <p className="serif" style={{fontSize:F.xxl}}>История сканов</p>
+              <p className="serif" style={{fontSize:F.xxl}}>{L("История сканов","Scan history")}</p>
               <button onClick={()=>setHistoryOpen(false)} className="icon-btn" style={{width:30,height:30,borderRadius:R.pill,background:"rgba(255,255,255,0.07)",border:"none",color:C.ink50,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ico n="close" s={14}/></button>
             </div>
-            {historyLoading && <p className="mono" style={{fontSize:F.sm,color:C.ink50}}>Загружаю<Dots/></p>}
+            {historyLoading && <p className="mono" style={{fontSize:F.sm,color:C.ink50}}>{L("Загружаю","Loading")}<Dots/></p>}
             {!historyLoading && historyItems.length===0 && (
               <div style={{padding:"28px 0",textAlign:"center"}}>
-                <p className="serif" style={{fontSize:F.xl}}>Здесь пока пусто</p>
-                <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:6}}>Сделай первый скан — он сохранится сюда</p>
+                <p className="serif" style={{fontSize:F.xl}}>{L("Здесь пока пусто","Nothing here yet")}</p>
+                <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:6}}>{L("Сделай первый скан — он сохранится сюда","Do your first scan and it'll be saved here")}</p>
               </div>
             )}
             {!historyLoading && historyItems.map(item=>{
@@ -1465,10 +1543,10 @@ export default function Page(){
                 <div key={item.scanId} onClick={()=>{tapFx();openHistoryScan(item.scanId)}} className="unlock-btn" style={{borderBottom:`1px solid ${C.lineSoft}`,padding:"14px 0",cursor:"pointer"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
                     <span className="serif" style={{fontSize:F.xl,color:C.gold}}>{item.percent}%</span>
-                    <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>{new Date(item.ts).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+                    <span className="mono" style={{fontSize:F.xs,color:C.ink55}}>{new Date(item.ts).toLocaleDateString(lg==="en"?"en-US":"ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
                   </div>
                   <p className="ai-font" style={{fontSize:F.sm,marginTop:5,color:C.ink70}}>{item.snippet}…</p>
-                  {n>0 && <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:6}}>Открыто разделов: {n}</p>}
+                  {n>0 && <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:6}}>{L("Открыто разделов","Sections unlocked")}: {n}</p>}
                 </div>
               )
             })}
@@ -1482,15 +1560,15 @@ export default function Page(){
           <div className="reveal" onClick={e=>e.stopPropagation()} style={{width:420,maxWidth:"100%",maxHeight:"78vh",overflowY:"auto",...glass,background:C.bgRaised,borderRadius:`${R.lg}px ${R.lg}px 0 0`,padding:`10px ${PAD}px calc(${PAD}px + env(safe-area-inset-bottom))`}}>
             <div style={{width:36,height:4,borderRadius:R.pill,background:"rgba(255,255,255,0.16)",margin:"0 auto 16px"}}/>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <p className="serif" style={{fontSize:F.xxl}}>Кто больше пригласил</p>
+              <p className="serif" style={{fontSize:F.xxl}}>{L("Кто больше пригласил","Top inviters")}</p>
               <button onClick={()=>setLeaderboardOpen(false)} className="icon-btn" style={{width:30,height:30,borderRadius:R.pill,background:"rgba(255,255,255,0.07)",border:"none",color:C.ink50,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Ico n="close" s={14}/></button>
             </div>
-            <p className="mono" style={{fontSize:F.xs,color:C.ink50,margin:"8px 0 16px",lineHeight:1.5}}>Топ-3 навсегда получают статус Founder — бесплатный доступ ко всем разборам.</p>
-            {leaderboardLoading && <p className="mono" style={{fontSize:F.sm,color:C.ink50}}>Загружаю<Dots/></p>}
+            <p className="mono" style={{fontSize:F.xs,color:C.ink50,margin:"8px 0 16px",lineHeight:1.5}}>{L("Топ-3 навсегда получают статус Founder — бесплатный доступ ко всем разборам.","Top 3 get Founder status forever: free access to all readings.")}</p>
+            {leaderboardLoading && <p className="mono" style={{fontSize:F.sm,color:C.ink50}}>{L("Загружаю","Loading")}<Dots/></p>}
             {!leaderboardLoading && leaderboardItems.length===0 && (
               <div style={{padding:"24px 0",textAlign:"center"}}>
-                <p className="serif" style={{fontSize:F.xl}}>Список пуст</p>
-                <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:6}}>Пригласи первого друга и займи первое место</p>
+                <p className="serif" style={{fontSize:F.xl}}>{L("Список пуст","The list is empty")}</p>
+                <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:6}}>{L("Пригласи первого друга и займи первое место","Invite your first friend and take first place")}</p>
               </div>
             )}
             {!leaderboardLoading && leaderboardItems.map((item,i)=>{
@@ -1499,14 +1577,14 @@ export default function Page(){
                 <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.lineSoft}`,padding:"12px 10px",margin:"0 -10px",borderRadius:R.sm,background:me?`${C.gold}0f`:"transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0}}>
                     <span className="mono" style={{fontSize:F.sm,width:24,color:i<3?C.gold:C.ink55,fontWeight:i<3?700:400}}>{i+1}</span>
-                    <span className="serif" style={{fontSize:F.lg,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{me?" · ты":""}</span>
+                    <span className="serif" style={{fontSize:F.lg,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{me?L(" · ты"," · you"):""}</span>
                     {i<3 && <span style={{color:C.gold,display:"flex"}}><Ico n="crown" s={13}/></span>}
                   </div>
                   <span className="mono" style={{fontSize:F.sm,color:C.gold,fontWeight:700}}>{item.count}</span>
                 </div>
               )
             })}
-            {myRank && myRank>10 && <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:14,textAlign:"center"}}>Твоё место: {myRank}</p>}
+            {myRank && myRank>10 && <p className="mono" style={{fontSize:F.xs,color:C.ink50,marginTop:14,textAlign:"center"}}>{L("Твоё место","Your rank")}: {myRank}</p>}
           </div>
         </div>
       )}

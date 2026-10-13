@@ -1,12 +1,17 @@
 // ПОЛОЖИТЬ СЮДА: app/api/similar/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { kvListPush, kvListAll } from '@/lib/kv'
+import { reqLang, type Lang } from '@/lib/i18n'
 
 const CAP_PER_BUCKET = 40 // сколько последних отрывков храним на дециль — держит выборку свежей и быстрой
 
 function bucketOf(percent: number){
   return Math.max(0, Math.min(90, Math.floor(percent / 10) * 10))
 }
+
+// Отрывки храним раздельно по языку, иначе англоязычному покажут русские. У ru старый ключ без
+// префикса — так не теряется уже накопленная выборка.
+const keyOf = (lang: Lang, bucket: number) => lang === "en" ? `similar:en:${bucket}` : `similar:${bucket}`
 
 // POST { percent, snippet, mode } — вызывается после каждого бесплатного
 // скана. snippet — короткий обрывок уже показанного пользователю текста
@@ -17,7 +22,7 @@ export async function POST(req: NextRequest){
     if(typeof percent !== "number" || !snippet) return NextResponse.json({ error: "bad input" }, { status: 400 })
     const safeSnippet = String(snippet).slice(0, 120)
     const bucket = bucketOf(percent)
-    await kvListPush(`similar:${bucket}`, { snippet: safeSnippet, mode, ts: Date.now() }, CAP_PER_BUCKET)
+    await kvListPush(keyOf(reqLang(req), bucket), { snippet: safeSnippet, mode, ts: Date.now() }, CAP_PER_BUCKET)
     return NextResponse.json({ ok: true })
   }catch(e){
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
@@ -33,12 +38,13 @@ export async function GET(req: NextRequest){
     if(Number.isNaN(percent)) return NextResponse.json({ error: "bad percent" }, { status: 400 })
 
     const bucket = bucketOf(percent)
-    let items = await kvListAll<{snippet:string, mode:string, ts:number}>(`similar:${bucket}`)
+    const lang = reqLang(req)
+    let items = await kvListAll<{snippet:string, mode:string, ts:number}>(keyOf(lang, bucket))
 
     // мало данных в своём дециле — подмешиваем соседние, чтобы не показывать пустоту
     if(items.length < 3){
-      const neighborUp = await kvListAll<{snippet:string, mode:string, ts:number}>(`similar:${Math.min(90, bucket+10)}`)
-      const neighborDown = await kvListAll<{snippet:string, mode:string, ts:number}>(`similar:${Math.max(0, bucket-10)}`)
+      const neighborUp = await kvListAll<{snippet:string, mode:string, ts:number}>(keyOf(lang, Math.min(90, bucket+10)))
+      const neighborDown = await kvListAll<{snippet:string, mode:string, ts:number}>(keyOf(lang, Math.max(0, bucket-10)))
       items = [...items, ...neighborUp, ...neighborDown]
     }
 

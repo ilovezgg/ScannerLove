@@ -26,6 +26,16 @@ export const PRICES: Record<Exclude<Feature, "seasonal">, { now: number; was: nu
   sub:          { now: 299, was: 299 },
 }
 
+export const CATALOG_EN: typeof CATALOG = {
+  deep:         { title: "Deep reading",       desc: "Thoughts, red flags, what to do" },
+  hidden:       { title: "What's unsaid",     desc: "Hidden emotions in body language" },
+  future:       { title: "Your future",        desc: "Will you stay together or not" },
+  custom:       { title: "Your question",      desc: "Ask anything about these two" },
+  bundle:       { title: "All three letters",  desc: "Reading, hidden and future at once" },
+  conversation: { title: "Chat analysis",      desc: "Up to 5 screenshots: who invests more, what's between the lines" },
+  sub:          { title: "Archive",            desc: "Unlimited scans and all readings, 30 days" },
+}
+
 export const CATALOG: Record<Exclude<Feature, "seasonal">, { title: string; desc: string }> = {
   deep:         { title: "Глубокий разбор",   desc: "Мысли, ред флаги, что делать" },
   hidden:       { title: "Что он(а) скрывает", desc: "Скрытые эмоции по языку тела" },

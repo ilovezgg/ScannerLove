@@ -1,7 +1,8 @@
 // ПОЛОЖИТЬ СЮДА: app/api/wheel/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { kvGet, kvSet, kvIncr, kvIncrTtl } from '@/lib/kv'
+import { kvGet, kvSet, kvIncr, kvLock, kvDel } from '@/lib/kv'
 import { authUserOrDev } from '@/lib/telegram-auth'
+import { reqLang, type Lang } from '@/lib/i18n'
 
 export const runtime = "nodejs"
 
@@ -22,6 +23,19 @@ const PRIZES = [
   { id: "flavor3", weight: 10, label: "Сегодня хороший день, чтобы написать первым(ой) 📩", type: "flavor" },
 ] as const
 
+// Подпись приза отдаём на языке того, кто смотрит, по prizeId: в KV лежит русская (старые записи).
+const LABELS_EN: Record<string, string> = {
+  flavor1: "The stars are on your side today ✨",
+  flavor2: "Something important will happen before sunset 🌙",
+  ref_credit: "+1 free unlock (same as for invites) 🎁",
+  free_custom: "Free \"Ask anything\" question on your next scan 💌",
+  flavor3: "A good day to text first 📩",
+}
+function localize(prize: { prizeId: string, label: string } | null, lang: Lang){
+  if(!prize || lang !== "en") return prize
+  return { ...prize, label: LABELS_EN[prize.prizeId] ?? prize.label }
+}
+
 function pickPrize(){
   const total = PRIZES.reduce((s,p)=>s+p.weight, 0)
   let r = Math.random() * total
@@ -37,36 +51,55 @@ export async function GET(req: NextRequest){
   const user = authUserOrDev(req)
   if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   const spun = await kvGet<{ prizeId: string, label: string }>(`wheel:${user.id}:${todayKey()}`)
-  return NextResponse.json({ spunToday: !!spun, prize: spun || null })
+  return NextResponse.json({ spunToday: !!spun, prize: localize(spun, reqLang(req, user)) })
 }
 
 // POST — крутит колесо один раз в сутки, применяет эффект приза
 export async function POST(req: NextRequest){
+  let lockKey: string | null = null
   try{
     const user = authUserOrDev(req)
     if(!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 })
     const userId = user.id
+    const lang = reqLang(req, user)
 
     const key = `wheel:${userId}:${todayKey()}`
     const already = await kvGet<{ prizeId: string, label: string }>(key)
-    if(already) return NextResponse.json({ ok: true, alreadySpun: true, prize: already })
+    if(already) return NextResponse.json({ ok: true, alreadySpun: true, prize: localize(already, lang) })
 
     // Слот занимаем атомарно ДО выдачи приза. Раньше get, затем выдача, затем set: двадцать
     // параллельных запросов проходили проверку и каждый начислял кредит.
-    if(await kvIncrTtl(`wheel:lock:${userId}:${todayKey()}`, 90_000) > 1){
-      return NextResponse.json({ ok: true, alreadySpun: true, prize: (await kvGet(key)) || null })
+    const lk = `wheel:lock:${userId}:${todayKey()}`
+    if(!await kvLock(lk, 90_000)){
+      const prize = await kvGet<{ prizeId: string, label: string }>(key)
+      // Лок занят, а приза нет: параллельный запрос ещё крутит. Не врём «уже крутил» с пустым призом.
+      if(!prize) return NextResponse.json({ error: "in progress" }, { status: 409 })
+      return NextResponse.json({ ok: true, alreadySpun: true, prize: localize(prize, lang) })
     }
 
+    lockKey = lk
+
+    // Сначала сохраняем приз, потом начисляем. Раньше было наоборот: сбой KV между шагами оставлял
+    // лок занятым без записанного приза, и человек сутки видел колесо, которое ничего не делает.
     const prize = pickPrize()
-
-    if(prize.type === "ref_credit") await kvIncr(`ref:credits:${userId}`)
-    if(prize.type === "free_custom") await kvIncr(`custom:free_credit:${userId}`)
-
     const result = { prizeId: prize.id, label: prize.label }
     await kvSet(key, result)
+    lockKey = null   // приз записан: дальше лок не отпускаем, иначе можно крутить повторно
 
-    return NextResponse.json({ ok: true, alreadySpun: false, prize: result })
+    // Приз уже записан, повторно крутить нельзя. Если начисление упало — один ретрай и громкий лог,
+    // иначе награда теряется молча.
+    const creditKey = prize.type === "ref_credit" ? `ref:credits:${userId}`
+                    : prize.type === "free_custom" ? `custom:free_credit:${userId}` : null
+    if(creditKey){
+      try{ await kvIncr(creditKey) }
+      catch{
+        await kvIncr(creditKey).catch(err => console.error("WHEEL PRIZE LOST: credit not granted, add manually", creditKey, err))
+      }
+    }
+
+    return NextResponse.json({ ok: true, alreadySpun: false, prize: localize(result, lang) })
   }catch(e){
+    if(lockKey) await kvDel(lockKey).catch(()=>{})   // приз не записан: даём крутить ещё раз
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }
 }
