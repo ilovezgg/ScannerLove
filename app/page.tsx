@@ -42,12 +42,13 @@ const initData = () => tgApp()?.initData || ""
 // SDK либо не подгружен, либо showAlert недоступен.
 function notify(text: string, cb?: () => void){
   const tg = tgApp()
-  if(tg?.showAlert){
-    tg.showAlert(text, () => cb?.())
-  } else {
-    alert(text)
-    cb?.()
-  }
+  // showAlert есть в SDK всегда, но на клиентах старше 6.2 (и вне Telegram) бросает
+  // WebAppMethodUnsupported — без catch ошибка просто не показывалась
+  try{
+    if(tg?.showAlert){ tg.showAlert(text, () => cb?.()); return }
+  }catch{}
+  alert(text)
+  cb?.()
 }
 
 async function api(path: string, opts: RequestInit = {}){
@@ -348,7 +349,7 @@ export default function Page(){
   const [opened,setOpened]=useState<Record<Feature,boolean>>({deep:false,hidden:false,future:false,custom:false})
   const [results,setResults]=useState<Record<Feature,string>>({deep:"",hidden:"",future:"",custom:""})
   const [busy,setBusy]=useState<Record<Feature,boolean>>({deep:false,hidden:false,future:false,custom:false})
-  const [deepExtra,setDeepExtra]=useState("")
+  const [letterExtra,setLetterExtra]=useState<Record<Feature,string>>({deep:"",hidden:"",future:"",custom:""})   // детали к deep/hidden/future
   const [customQuestion,setCustomQuestion]=useState("")
   const [chipSeed,setChipSeed]=useState(0)
   const [selectedCard,setSelectedCard]=useState<Feature>("deep")
@@ -391,10 +392,35 @@ export default function Page(){
   const [similarLoading,setSimilarLoading]=useState(false)
 
   const resultRef = useRef<HTMLDivElement|null>(null)
+  const scanIdRef = useRef<string|null>(null)
+  scanIdRef.current = scanId
+  const [ageOk,setAgeOk]=useState<boolean|null>(null)   // null — ещё не прочитали
+  const [ageTick,setAgeTick]=useState(false)
 
   useEffect(()=>{
     try{ const s=localStorage.getItem("love_scanner_sound"); if(s!==null) setSoundOn(s==="1") }catch{}
+    // Возраст спрашиваем один раз. localStorage в WebView Telegram иногда чистится,
+    // поэтому дублируем в CloudStorage бота — он живёт на аккаунте, а не на устройстве.
+    let local = false
+    try{ local = localStorage.getItem("love_scanner_18")==="1" }catch{}
+    if(local){ setAgeOk(true); return }
+    const cs = tgApp()?.CloudStorage
+    if(!cs?.getItem){ setAgeOk(false); return }
+    try{
+      cs.getItem("age18", (err: unknown, v?: string)=>{
+        const ok = !err && v==="1"
+        if(ok){ try{ localStorage.setItem("love_scanner_18","1") }catch{} }
+        setAgeOk(ok)
+      })
+    }catch{ setAgeOk(false) }
   },[])
+
+  const confirmAge = () => {
+    tapFx()
+    setAgeOk(true)
+    try{ localStorage.setItem("love_scanner_18","1") }catch{}
+    try{ tgApp()?.CloudStorage?.setItem?.("age18","1",()=>{}) }catch{}
+  }
 
   useEffect(()=>{
     const l = clientLang()
@@ -505,31 +531,63 @@ export default function Page(){
   const photosReady = inputKind==="joint" ? !!pJoint : !!(p1 && p2)
 
   /* ── генерация платных разделов ── */
+  // Сервер мог списать покупку и сохранить текст, а ответ до нас не дошёл (свернули TG, моргнула сеть).
+  // Тогда повторный тап даёт 402 — забираем готовый текст из скана, а не пишем «оплата не подтвердилась».
+  const syncFeature = async (feature: Feature, sid: string) => {
+    try{
+      const { data } = await apiJson(`/api/scan?scanId=${sid}`)
+      const sc = data?.scan
+      if(!sc || scanIdRef.current!==sid) return false
+      const text = sc.results?.[feature]
+      if(!sc.unlocked?.[feature] && text){
+        setResults(r=>({...r,[feature]:text}))
+        setUnlocked(u=>({...u,[feature]:false}))
+        setOpened(o=>({...o,[feature]:false}))
+        return true
+      }
+    }catch{}
+    return false
+  }
+
   const generate = async (feature: Feature, extraOverride?: string) => {
-    if(viewingHistoryScan) return
+    if(viewingHistoryScan || !scanId) return
+    const sid = scanId
     setBusy(b=>({...b,[feature]:true}))
     try{
       const { status, data } = await post("/api/love",{
         photos: photosForScan(),
         input: effectiveInput(),
         type: feature,
-        extra: feature==="deep" ? deepExtra : (feature==="custom" ? (extraOverride ?? customQuestion) : ""),
+        extra: feature==="custom" ? (extraOverride ?? customQuestion) : letterExtra[feature],
         mode,
-        scanId,
+        scanId: sid,
         teaser: teasers[feature] || "",
       })
+      // Пока ждали, сделали новый скан — ответ старого в новый не пишем
+      if(scanIdRef.current!==sid){ setBusy(b=>({...b,[feature]:false})); return }
       if(status===402){
-        setResults(r=>({...r,[feature]:L("Оплата ещё не подтвердилась. Подожди пару секунд и нажми ещё раз.","Payment isn't confirmed yet. Wait a couple of seconds and tap again.")}))
+        if(!(await syncFeature(feature, sid)))
+          setResults(r=>({...r,[feature]:L("Оплата ещё не подтвердилась. Подожди пару секунд и нажми ещё раз.","Payment isn't confirmed yet. Wait a couple of seconds and tap again.")}))
+      } else if((status===422 || status===409 || status===400) && data?.error){
+        // Отказ по входу или разбор уже пишется: повтор сразу даст то же самое, поэтому говорим причину
+        setResults(r=>({...r,[feature]:data.error}))
       } else if(status!==200 || !data.full){
-        // Не сохраняем через /api/scan/result — не подменяем настоящий платный
-        // разбор заглушкой. Повторный тап бесплатен: фича уже открыта на сервере.
+        // Не сохраняем заглушку как платный разбор. Повторный тап бесплатен: при сбое сервер вернул покупку.
         setResults(r=>({...r,[feature]:L("Не получилось собрать разбор. Попробуй ещё раз — повторно платить не нужно.","Couldn't put the reading together. Try again, you won't be charged twice.")}))
       } else {
         setResults(r=>({...r,[feature]:data.full}))
-        if(scanId) post("/api/scan/result",{scanId, feature, text:data.full}).catch(()=>{})
+        // Текст сервер сохранил в скан сам. Разовая покупка потрачена — плашка снова в виде покупки,
+        // иначе поле для текста висит открытым, а новый разбор уже не пройдёт.
+        if(data.consumed){
+          setUnlocked(u=>({...u,[feature]:false}))
+          setOpened(o=>({...o,[feature]:false}))
+          if(feature==="custom") setCustomQuestion("")
+          else setLetterExtra(x=>({...x,[feature]:""}))
+        }
       }
     }catch{
-      setResults(r=>({...r,[feature]:L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")}))
+      if(!(await syncFeature(feature, sid)))
+        setResults(r=>({...r,[feature]:L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")}))
     }
     setBusy(b=>({...b,[feature]:false}))
   }
@@ -539,7 +597,7 @@ export default function Page(){
     setSeasonalLoad(true)
     try{
       const { data } = await post("/api/love",{ photos:photosForScan(), input:effectiveInput(), type:"seasonal", mode, eventId:activeEvent.id, scanId })
-      setSeasonalRes(data.full || L("Не получилось. Попробуй ещё раз.","Didn't work. Try again."))
+      setSeasonalRes(data.full || data.error || L("Не получилось. Попробуй ещё раз.","Didn't work. Try again."))
     }catch{ setSeasonalRes(L("Не получилось. Попробуй ещё раз.","Didn't work. Try again.")) }
     setSeasonalLoad(false)
   }
@@ -586,11 +644,10 @@ export default function Page(){
 
   const applyUnlock = (feature: Feature|"bundle") => {
     playSound("coin"); haptic("success")
-    if(feature==="bundle"){
-      setUnlocked(u=>({...u,deep:true,hidden:true,future:true}))
-    } else {
-      setUnlocked(u=>({...u,[feature]:true}))
-    }
+    // Повторная покупка: старый ответ убираем, чтобы он не висел под новой формой
+    const fs: Feature[] = feature==="bundle" ? ["deep","hidden","future"] : [feature]
+    setUnlocked(u=>{ const n={...u}; fs.forEach(f=>{ n[f]=true }); return n })
+    setResults(r=>{ const n={...r}; fs.forEach(f=>{ n[f]="" }); return n })
   }
 
   /* ── покупка ── */
@@ -642,8 +699,12 @@ export default function Page(){
         }
 
         const ok = await waitForUnlock(feature)
-        if(ok) applyUnlock(feature)
-        else notify(L("Оплата прошла, но подтверждение задерживается. Открой историю сканов через минуту — разбор будет там.","Payment went through but confirmation is slow. Open scan history in a minute, the reading will be there."))
+        if(ok){ applyUnlock(feature); setWaiting(null); return }
+        // Из истории письмо не дописать (фото там не хранятся), поэтому держим человека здесь
+        // и ждём подтверждение дольше, а не отправляем в историю.
+        notify(L("Оплата прошла, подтверждение задерживается. Не закрывай приложение — письмо откроется само.","Payment went through, confirmation is slow. Keep the app open, the letter will unlock by itself."))
+        if(await waitForUnlock(feature) || await waitForUnlock(feature)) applyUnlock(feature)
+        else notify(L("Подтверждение так и не пришло. Повторно не плати: Telegram иногда доставляет его с задержкой.","Confirmation never arrived. Don't pay again: Telegram sometimes delivers it late."))
         setWaiting(null)
       })
     }catch(e:any){ setWaiting(null); notify(e.message) }
@@ -694,7 +755,7 @@ export default function Page(){
       setUnlocked({deep:fresh,hidden:fresh,future:fresh,custom:fresh})
       setOpened({deep:false,hidden:false,future:false,custom:false})
       setResults({deep:"",hidden:"",future:"",custom:""})
-      setDeepExtra(""); setCustomQuestion("")
+      setLetterExtra({deep:"",hidden:"",future:"",custom:""}); setCustomQuestion("")
 
       if(typeof data.percent==="number" && data.full){
         post("/api/similar",{percent:data.percent, snippet:String(data.full).slice(0,120), mode}).catch(()=>{})
@@ -729,7 +790,7 @@ export default function Page(){
         photos: chatShots, input:"chat", type:"conversation", mode,
       })
       if(status===402){ setConvRes(L("Оплата ещё не подтвердилась, подожди пару секунд.","Payment isn't confirmed yet, wait a couple of seconds.")) }
-      else setConvRes(data.full || L("Не получилось разобрать переписку. Попробуй ещё раз.","Couldn't read the chat. Try again."))
+      else setConvRes(data.full || (status===422 ? data.error : "") || L("Не получилось разобрать переписку. Попробуй ещё раз.","Couldn't read the chat. Try again."))
       refreshSubscription()
     }catch{ setConvRes(L("Сеть подвела. Попробуй ещё раз.","Network hiccup. Try again.")) }
     setConvLoad(false)
@@ -962,11 +1023,13 @@ export default function Page(){
   const CARDS: {id:Feature, ico:IcoName, title:string, sub:string}[] = [
     { id:"deep",   ico:"layers", title:L("Глубокий разбор","Deep reading"), sub:L("Характеры, ред флаги, что делать","Personalities, red flags, what to do") },
     { id:"hidden", ico:"mask",   title:L("Что не говорит","What's unsaid"),  sub:L("Скрытые эмоции по языку тела","Hidden emotions in body language") },
-    { id:"future", ico:"moon",   title:mode==="friend"?L("Будущее дружбы","Future of your friendship"):L("Будущее пары","Your future together"), sub:mode==="friend"?L("Останетесь ли близки","Will you stay close"):L("Расстанетесь или вместе","Split up or stay together") },
+    { id:"future", ico:"moon",   title:mode==="friend"?L("Будущее дружбы","Future of your friendship"):mode==="crush"?L("Что будет дальше","What happens next"):L("Будущее пары","Your future together"), sub:mode==="friend"?L("Останетесь ли близки","Will you stay close"):mode==="crush"?L("Есть ли шанс","Is there a chance"):L("Расстанетесь или вместе","Split up or stay together") },
     { id:"custom", ico:"letter", title:L("Свой вопрос","Your question"),     sub:L("Спроси что угодно про этих двоих","Ask anything about these two") },
   ]
   const current = CARDS.find(c=>c.id===selectedCard)!
   const allThree = unlocked.deep && unlocked.hidden && unlocked.future
+  // Бандл — только когда ни одно из трёх не куплено: иначе платят за уже оплаченное
+  const anyOfThree = unlocked.deep || unlocked.hidden || unlocked.future
 
   // вызывается как функция, а не <PhotoSlot/>: компонент, объявленный в рендере, перемонтируется
   // на каждый setState, и SmartImg заново гасит/проявляет фото
@@ -1079,7 +1142,7 @@ export default function Page(){
                 ))}
               </div>
               <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:12,lineHeight:1.5}}>
-                {L("Это развлечение, а не диагноз. Фото уходят на разбор нейросети, подробности в ","Just for fun, not a diagnosis. Photos are sent to an AI for analysis, details in the ")}<a href="/privacy" style={{color:C.ink70,textDecoration:"underline"}}>{L("политике конфиденциальности","privacy policy")}</a>.
+                {L("18+. Это развлечение, а не диагноз. Фото уходят на разбор нейросети, подробности в ","18+. Just for fun, not a diagnosis. Photos are sent to an AI for analysis, details in the ")}<a href="/privacy" style={{color:C.ink70,textDecoration:"underline"}}>{L("политике конфиденциальности","privacy policy")}</a>.
               </p>
             </>
           )}
@@ -1263,7 +1326,9 @@ export default function Page(){
                     <p className="mono" style={{fontSize:F.xs,marginTop:6,color:C.gold}}>{L("Приз с колеса — бесплатно","Wheel prize · free")}</p>
                   )}
                 </div>
-                {!unlocked[selectedCard] ? (
+                {viewingHistoryScan && !unlocked[selectedCard] ? (
+                  results[selectedCard] ? <span className="mono" style={{fontSize:F.sm,color:C.gold,paddingTop:6}}>{L("Прочитано","Read")}</span> : null
+                ) : !unlocked[selectedCard] ? (
                   <button onClick={()=>{tapFx();buy(selectedCard)}} disabled={waiting===selectedCard || !scanId} className="unlock-btn mono" style={{height:44,padding:"0 16px",borderRadius:R.pill,border:"none",cursor:scanId?"pointer":"not-allowed",background:`linear-gradient(135deg, ${C.red}, ${C.redDeep})`,color:"#fff",fontSize:F.sm,fontWeight:700,whiteSpace:"nowrap",flexShrink:0,opacity:scanId?1:0.45}}>
                     {waiting===selectedCard ? <>{L("Жду","Waiting")}<Dots/></> : (selectedCard==="custom" && hasFreeCustomCredit ? L("Открыть","Open") : `${PRICES[selectedCard].now} ✦`)}
                   </button>
@@ -1274,57 +1339,57 @@ export default function Page(){
                 <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10}}>{L("Сначала сделай скан — письма пишутся под конкретные фото","Do a scan first: letters are written for specific photos")}</p>
               )}
 
-              {!unlocked[selectedCard] && scanId && <Teaser feature={selectedCard}/>}
-
-              {unlocked[selectedCard] && !opened[selectedCard] && selectedCard!=="custom" && (
-                <EnvelopeReveal onOpen={()=>{ setOpened(o=>({...o,[selectedCard]:true})); generate(selectedCard) }}/>
+              {!unlocked[selectedCard] && scanId && !results[selectedCard] && !viewingHistoryScan && <Teaser feature={selectedCard}/>}
+              {viewingHistoryScan && !results[selectedCard] && (
+                <p className="mono" style={{fontSize:F.xs,color:C.ink55,marginTop:10,lineHeight:1.5}}>{unlocked[selectedCard]
+                  ? L("Письмо оплачено, но не написано, а фото в истории не хранятся, поэтому дописать его отсюда нельзя.","This letter is paid but not written, and photos aren't kept in history, so it can't be written from here.")
+                  : L("Письма покупаются к свежему скану — сделай новый с этими фото.","Letters are bought for a fresh scan. Run a new one with these photos.")}</p>
               )}
 
-              {/* deep */}
-              {selectedCard==="deep" && unlocked.deep && opened.deep && (
+              {unlocked[selectedCard] && !opened[selectedCard] && selectedCard!=="custom" && !viewingHistoryScan && (
+                <EnvelopeReveal onOpen={()=>setOpened(o=>({...o,[selectedCard]:true}))}/>
+              )}
+
+              {/* deep / hidden / future: сначала детали от человека, потом разбор */}
+              {selectedCard!=="custom" && unlocked[selectedCard] && opened[selectedCard] && !viewingHistoryScan && (
                 <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
-                  {!viewingHistoryScan && <textarea value={deepExtra} onChange={e=>setDeepExtra(e.target.value)} placeholder={L("Что между вами происходит? Пара фраз сделает разбор точнее.","What's going on between you? A couple of lines make the reading sharper.")} className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>}
-                  {!viewingHistoryScan && <button onClick={()=>{tapFx();generate("deep")}} disabled={busy.deep} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700}}><span className="mono" style={{fontSize:F.sm}}>{busy.deep ? <>{L("Вскрываю","Opening")}<Dots/></> : (results.deep ? L("Пересобрать с деталями","Redo with details") : L("Вскрыть письмо","Open the letter"))}</span></button>}
-                  {busy.deep && !results.deep && <Skeleton h={78}/>}
-                  {results.deep && <AnswerBox text={results.deep}/>}
+                  <p className="mono" style={{fontSize:F.xs,color:C.ink70,lineHeight:1.5}}>{L("Сначала расскажи, что между вами: как познакомились, что происходит сейчас, что тревожит. Письмо напишется под это.","First tell me what's going on between you: how you met, what's happening now, what worries you. The letter is written around it.")}</p>
+                  <textarea value={letterExtra[selectedCard]} onChange={e=>{const v=e.target.value; setLetterExtra(x=>({...x,[selectedCard]:v}))}} placeholder={L("Например: встречаемся полгода, последнюю неделю отвечает односложно…","For example: dating for six months, this week the replies are one word…")} className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
+                  <button onClick={()=>{tapFx();generate(selectedCard)}} disabled={busy[selectedCard]||!letterExtra[selectedCard].trim()} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:letterExtra[selectedCard].trim()?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:letterExtra[selectedCard].trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy[selectedCard] ? <>{L("Вскрываю","Opening")}<Dots/></> : (results[selectedCard] ? L("Пересобрать с деталями","Redo with details") : L("Вскрыть письмо","Open the letter"))}</span></button>
+                  {!subActive && !isFounder && <p className="mono" style={{fontSize:F.xs,color:C.ink55}}>{L("Одна покупка — один разбор, так что пиши подробнее.","One purchase, one reading, so give some detail.")}</p>}
                 </div>
               )}
 
-              {/* hidden / future */}
-              {(selectedCard==="hidden"||selectedCard==="future") && unlocked[selectedCard] && opened[selectedCard] && (<>
-                {busy[selectedCard] && !results[selectedCard] && <Skeleton/>}
-                {results[selectedCard] && <AnswerBox text={results[selectedCard]}/>}
-              </>)}
-
-              {/* custom */}
-              {selectedCard==="custom" && unlocked.custom && !opened.custom && (
+              {/* custom: вопрос */}
+              {selectedCard==="custom" && unlocked.custom && !viewingHistoryScan && (
                 <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:10}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <p className="mono" style={label}>{L("Можно спросить так","You could ask")}</p>
-                    <button onClick={()=>{tapFx();setChipSeed(s=>s+1)}} className="mono unlock-btn" style={{fontSize:F.xs,background:"none",border:"none",cursor:"pointer",color:C.gold,display:"inline-flex",alignItems:"center",gap:5}}><Ico n="refresh" s={12}/> {L("другие","more")}</button>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {pickQuestions(mode,chipSeed,lg).map((q,i)=>(
-                      <button key={i} onClick={()=>{tapFx();setCustomQuestion(q)}} className="unlock-btn ai-font" style={{textAlign:"left",padding:"10px 13px",borderRadius:R.sm,cursor:"pointer",fontSize:F.md,lineHeight:1.4,background:customQuestion===q?`${C.gold}1c`:"rgba(255,255,255,0.035)",border:customQuestion===q?`1px solid ${C.gold}77`:`1px solid ${C.lineSoft}`,color:customQuestion===q?C.ink:C.ink70}}>{q}</button>
-                    ))}
-                  </div>
-                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder={L("Или напиши свой вопрос","Or write your own question")} className="mono letter-area" style={{width:"100%",minHeight:70,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
-                  <button onClick={()=>{tapFx();setOpened(o=>({...o,custom:true}));generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{L("Задать вопрос","Ask")}</span></button>
+                  {!results.custom && (<>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <p className="mono" style={label}>{L("Можно спросить так","You could ask")}</p>
+                      <button onClick={()=>{tapFx();setChipSeed(s=>s+1)}} className="mono unlock-btn" style={{fontSize:F.xs,background:"none",border:"none",cursor:"pointer",color:C.gold,display:"inline-flex",alignItems:"center",gap:5}}><Ico n="refresh" s={12}/> {L("другие","more")}</button>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                      {pickQuestions(mode,chipSeed,lg).map((q,i)=>(
+                        <button key={i} onClick={()=>{tapFx();setCustomQuestion(q)}} className="unlock-btn ai-font" style={{textAlign:"left",padding:"10px 13px",borderRadius:R.sm,cursor:"pointer",fontSize:F.md,lineHeight:1.4,background:customQuestion===q?`${C.gold}1c`:"rgba(255,255,255,0.035)",border:customQuestion===q?`1px solid ${C.gold}77`:`1px solid ${C.lineSoft}`,color:customQuestion===q?C.ink:C.ink70}}>{q}</button>
+                      ))}
+                    </div>
+                  </>)}
+                  <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder={results.custom ? L("Ещё вопрос","Another question") : L("Или напиши свой вопрос","Or write your own question")} className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
+                  <button onClick={()=>{tapFx();generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:customQuestion.trim()?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy.custom ? <>{L("Спрашиваю","Asking")}<Dots/></> : (results.custom ? L("Спросить ещё","Ask again") : L("Задать вопрос","Ask"))}</span></button>
+                  {!subActive && !isFounder && <p className="mono" style={{fontSize:F.xs,color:C.ink55}}>{L("Одна покупка — один ответ.","One purchase, one answer.")}</p>}
                 </div>
               )}
-              {selectedCard==="custom" && unlocked.custom && opened.custom && (
-                <div style={{marginTop:2,display:"flex",flexDirection:"column",gap:10}}>
-                  {busy.custom && !results.custom && <Skeleton h={78}/>}
-                  {results.custom && <AnswerBox text={results.custom}/>}
-                  {results.custom && !viewingHistoryScan && (<>
-                    <textarea value={customQuestion} onChange={e=>setCustomQuestion(e.target.value)} placeholder={L("Ещё вопрос","Another question")} className="mono letter-area" style={{width:"100%",minHeight:52,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
-                    <button onClick={()=>{tapFx();generate("custom")}} disabled={!customQuestion.trim()||busy.custom} className="unlock-btn" style={{width:"100%",height:38,borderRadius:R.pill,border:`1px solid ${C.line}`,cursor:"pointer",background:"rgba(255,255,255,0.07)",color:C.ink,opacity:customQuestion.trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy.custom ? <>{L("Спрашиваю","Asking")}<Dots/></> : L("Спросить ещё","Ask again")}</span></button>
-                  </>)}
+
+              {/* ответ: остаётся на виду и после того, как плашка вернулась к покупке */}
+              {(busy[selectedCard] || results[selectedCard]) && (
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
+                  {busy[selectedCard] && !results[selectedCard] && <Skeleton h={78}/>}
+                  {results[selectedCard] && <AnswerBox text={results[selectedCard]}/>}
                 </div>
               )}
             </div>
 
-            {!allThree && scanId && (
+            {!anyOfThree && scanId && !viewingHistoryScan && (
               <button onClick={()=>{tapFx();buy("bundle")}} disabled={waiting==="bundle"} className="unlock-btn" style={{marginTop:10,width:"100%",padding:"14px 18px",borderRadius:R.md,border:`1px solid ${C.gold}55`,cursor:"pointer",background:`linear-gradient(135deg, ${C.gold}18, rgba(255,255,255,0.02))`,color:C.ink,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,textAlign:"left"}}>
                 <span>
                   <span className="serif" style={{fontSize:F.xl,display:"block",lineHeight:1.1}}>{L("Все три письма","All three letters")}</span>
@@ -1496,6 +1561,20 @@ export default function Page(){
       </div>
 
       {/* колесо */}
+      {ageOk===false && (
+        <div style={{position:"fixed",inset:0,background:"rgba(6,5,5,0.86)",backdropFilter:"blur(8px)",zIndex:40,display:"flex",justifyContent:"center",alignItems:"center",padding:PAD}}>
+          <div className="reveal" style={{width:340,maxWidth:"100%",...glass,background:C.bgRaised,borderRadius:R.lg,padding:26,textAlign:"center"}}>
+            <p className="serif" style={{fontSize:F.xxl}}>18+</p>
+            <p className="mono" style={{fontSize:F.sm,color:C.ink70,marginTop:10,lineHeight:1.5}}>{L("Love Scanner — для взрослых. Разборы про отношения, флирт и чувства.","Love Scanner is for adults. Readings about relationships, flirting and feelings.")}</p>
+            <label style={{display:"flex",alignItems:"center",gap:10,marginTop:20,cursor:"pointer",textAlign:"left"}}>
+              <input type="checkbox" checked={ageTick} onChange={e=>setAgeTick(e.target.checked)} style={{width:20,height:20,accentColor:C.gold,flexShrink:0}}/>
+              <span className="mono" style={{fontSize:F.sm,color:C.ink}}>{L("Мне есть 18 лет","I'm 18 or older")}</span>
+            </label>
+            <button onClick={confirmAge} disabled={!ageTick} className="unlock-btn" style={{marginTop:18,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:ageTick?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:ageTick?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{L("Войти","Enter")}</span></button>
+          </div>
+        </div>
+      )}
+
       {wheelOpen && (
         <div onClick={()=>setWheelOpen(false)} style={{position:"fixed",inset:0,background:"rgba(6,5,5,0.72)",backdropFilter:"blur(6px)",zIndex:20,display:"flex",justifyContent:"center",alignItems:"center",padding:PAD}}>
           <div className="reveal" onClick={e=>e.stopPropagation()} style={{width:340,maxWidth:"100%",...glass,background:C.bgRaised,borderRadius:R.lg,padding:26,textAlign:"center"}}>
