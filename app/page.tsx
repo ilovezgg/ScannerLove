@@ -229,6 +229,20 @@ const SUGGESTED_QUESTIONS_EN: Record<Mode, string[]> = {
   ],
 }
 
+// Подсказки к полю деталей платного письма: тап дописывает фразу, писать сочинение не обязательно
+const LETTER_HINTS: Record<Lang, Record<Mode, string[]>> = {
+  ru: {
+    couple: ["встречаемся недавно","вместе давно","стало прохладнее","часто ссоримся","недавно поссорились","живём вместе","на расстоянии","думаю о будущем"],
+    crush: ["нравится, но молчу","переписываемся","виделись пару раз","не понимаю, взаимно ли","он(а) то пишет, то пропадает","боюсь сделать первый шаг","есть кто-то третий"],
+    friend: ["дружим давно","недавно познакомились","стали реже общаться","была ссора","вместе работаем","одна компания"],
+  },
+  en: {
+    couple: ["dating recently","together for years","things cooled down","we argue a lot","just had a fight","living together","long distance","thinking about the future"],
+    crush: ["I like them but stay quiet","we text","met a couple of times","not sure it's mutual","they text then vanish","scared to make the first move","there's someone else"],
+    friend: ["friends for years","just met","we talk less now","we had a fight","we work together","same friend group"],
+  },
+}
+
 const SUGGESTED_QUESTIONS: Record<Mode, string[]> = {
   couple: [
     "Что он(а) на самом деле ко мне чувствует?",
@@ -395,6 +409,14 @@ export default function Page(){
   const scanIdRef = useRef<string|null>(null)
   scanIdRef.current = scanId
   const [ageOk,setAgeOk]=useState<boolean|null>(null)   // null — ещё не прочитали
+  const [ageGateOpen,setAgeGateOpen]=useState(false)
+  const ageNextRef = useRef<(()=>void)|null>(null)
+  // 18+ спрашиваем не на входе, а на первом скане: к этому моменту человек уже хочет результат
+  const withAge = (fn: ()=>void) => {
+    if(ageOk===true){ fn(); return }
+    ageNextRef.current = fn
+    setAgeGateOpen(true)
+  }
   const [ageTick,setAgeTick]=useState(false)
 
   useEffect(()=>{
@@ -410,7 +432,7 @@ export default function Page(){
       cs.getItem("age18", (err: unknown, v?: string)=>{
         const ok = !err && v==="1"
         if(ok){ try{ localStorage.setItem("love_scanner_18","1") }catch{} }
-        setAgeOk(ok)
+        setAgeOk(prev => prev===true ? true : ok)   // поздний ответ не отменяет уже данное подтверждение
       })
     }catch{ setAgeOk(false) }
   },[])
@@ -418,8 +440,11 @@ export default function Page(){
   const confirmAge = () => {
     tapFx()
     setAgeOk(true)
+    setAgeGateOpen(false)
     try{ localStorage.setItem("love_scanner_18","1") }catch{}
     try{ tgApp()?.CloudStorage?.setItem?.("age18","1",()=>{}) }catch{}
+    const next = ageNextRef.current; ageNextRef.current = null
+    next?.()
   }
 
   useEffect(()=>{
@@ -1222,7 +1247,7 @@ export default function Page(){
         </div>
 
         <div className="reveal" style={{padding:`0 ${PAD}px`,marginTop:16,animationDelay:".14s"}}>
-          <button onClick={()=>{tapFx();check()}} disabled={load||!photosReady} className="cta" style={{width:"100%",height:56,borderRadius:R.pill,border:"none",cursor:photosReady?"pointer":"not-allowed",background:photosReady?`linear-gradient(120deg, ${C.red}, ${C.redDeep})`:"rgba(255,255,255,0.06)",color:photosReady?"#fff":C.ink35,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:photosReady?`0 12px 34px ${C.red}3d`:"none",opacity:load?.8:1}}>
+          <button onClick={()=>{tapFx();withAge(check)}} disabled={load||!photosReady} className="cta" style={{width:"100%",height:56,borderRadius:R.pill,border:"none",cursor:photosReady?"pointer":"not-allowed",background:photosReady?`linear-gradient(120deg, ${C.red}, ${C.redDeep})`:"rgba(255,255,255,0.06)",color:photosReady?"#fff":C.ink35,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:photosReady?`0 12px 34px ${C.red}3d`:"none",opacity:load?.8:1}}>
             <span className="mono" style={{fontSize:F.sm,letterSpacing:"0.14em",textTransform:"uppercase",fontWeight:500}}>
               {load ? <>{L("Считываю кадры","Reading the photos")}<Dots/></> : photosReady ? L("Проверить совместимость","Check compatibility") : (inputKind==="joint"?L("Добавь совместное фото","Add a photo of you two"):L("Добавь оба фото","Add both photos"))}
             </span>
@@ -1353,8 +1378,18 @@ export default function Page(){
               {/* deep / hidden / future: сначала детали от человека, потом разбор */}
               {selectedCard!=="custom" && unlocked[selectedCard] && opened[selectedCard] && !viewingHistoryScan && (
                 <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
-                  <p className="mono" style={{fontSize:F.xs,color:C.ink70,lineHeight:1.5}}>{L("Сначала расскажи, что между вами: как познакомились, что происходит сейчас, что тревожит. Письмо напишется под это.","First tell me what's going on between you: how you met, what's happening now, what worries you. The letter is written around it.")}</p>
+                  <p className="mono" style={{fontSize:F.xs,color:C.ink70,lineHeight:1.5}}>{L("Сначала расскажи, что между вами: тапни подсказки или напиши своими словами. Письмо напишется под это.","First tell me what's going on between you: tap the hints or write it in your own words. The letter is written around it.")}</p>
                   <textarea value={letterExtra[selectedCard]} onChange={e=>{const v=e.target.value; setLetterExtra(x=>({...x,[selectedCard]:v}))}} placeholder={L("Например: встречаемся полгода, последнюю неделю отвечает односложно…","For example: dating for six months, this week the replies are one word…")} className="mono letter-area" style={{width:"100%",minHeight:72,borderRadius:R.sm,background:"rgba(255,255,255,0.04)",border:`1px solid ${C.line}`,padding:12,fontSize:F.sm,color:C.ink,resize:"vertical",lineHeight:1.5}}/>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {LETTER_HINTS[lg][mode].map(h=>{
+                      const on = letterExtra[selectedCard].includes(h)
+                      return <button key={h} onClick={()=>{tapFx(); setLetterExtra(x=>{
+                        const cur = x[selectedCard].trim()
+                        if(cur.includes(h)) return x
+                        return {...x,[selectedCard]: cur ? `${cur.replace(/[.,;]+$/,"")}, ${h}` : h}
+                      })}} className="unlock-btn mono" style={{padding:"7px 11px",borderRadius:R.pill,cursor:"pointer",fontSize:F.xs,lineHeight:1.2,background:on?`${C.gold}1c`:"rgba(255,255,255,0.035)",border:on?`1px solid ${C.gold}77`:`1px solid ${C.lineSoft}`,color:on?C.ink:C.ink70}}>{h}</button>
+                    })}
+                  </div>
                   <button onClick={()=>{tapFx();generate(selectedCard)}} disabled={busy[selectedCard]||!letterExtra[selectedCard].trim()} className="unlock-btn" style={{width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:letterExtra[selectedCard].trim()?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:letterExtra[selectedCard].trim()?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{busy[selectedCard] ? <>{L("Вскрываю","Opening")}<Dots/></> : (results[selectedCard] ? L("Пересобрать с деталями","Redo with details") : L("Вскрыть письмо","Open the letter"))}</span></button>
                   {!subActive && !isFounder && <p className="mono" style={{fontSize:F.xs,color:C.ink55}}>{L("Одна покупка — один разбор, так что пиши подробнее.","One purchase, one reading, so give some detail.")}</p>}
                 </div>
@@ -1473,7 +1508,7 @@ export default function Page(){
                     </label>
                   )}
                 </div>
-                <button onClick={()=>{tapFx();runConversation()}} disabled={!chatShots.length||convLoad} className="unlock-btn" style={{marginTop:12,width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:chatShots.length?1:0.45}}>
+                <button onClick={()=>{tapFx();withAge(runConversation)}} disabled={!chatShots.length||convLoad} className="unlock-btn" style={{marginTop:12,width:"100%",height:42,borderRadius:R.pill,border:"none",cursor:"pointer",background:C.gold,color:C.goldInk,fontWeight:700,opacity:chatShots.length?1:0.45}}>
                   <span className="mono" style={{fontSize:F.sm}}>{convLoad ? <>{L("Читаю переписку","Reading the chat")}<Dots/></> : L("Разобрать","Analyze")}</span>
                 </button>
                 {convLoad && !convRes && <Skeleton h={90}/>}
@@ -1561,16 +1596,16 @@ export default function Page(){
       </div>
 
       {/* колесо */}
-      {ageOk===false && (
-        <div style={{position:"fixed",inset:0,background:"rgba(6,5,5,0.86)",backdropFilter:"blur(8px)",zIndex:40,display:"flex",justifyContent:"center",alignItems:"center",padding:PAD}}>
-          <div className="reveal" style={{width:340,maxWidth:"100%",...glass,background:C.bgRaised,borderRadius:R.lg,padding:26,textAlign:"center"}}>
+      {ageGateOpen && (
+        <div onClick={()=>{ setAgeGateOpen(false); setAgeTick(false); ageNextRef.current=null }} style={{position:"fixed",inset:0,background:"rgba(6,5,5,0.86)",backdropFilter:"blur(8px)",zIndex:40,display:"flex",justifyContent:"center",alignItems:"center",padding:PAD}}>
+          <div className="reveal" onClick={e=>e.stopPropagation()} style={{width:340,maxWidth:"100%",...glass,background:C.bgRaised,borderRadius:R.lg,padding:26,textAlign:"center"}}>
             <p className="serif" style={{fontSize:F.xxl}}>18+</p>
             <p className="mono" style={{fontSize:F.sm,color:C.ink70,marginTop:10,lineHeight:1.5}}>{L("Love Scanner — для взрослых. Разборы про отношения, флирт и чувства.","Love Scanner is for adults. Readings about relationships, flirting and feelings.")}</p>
             <label style={{display:"flex",alignItems:"center",gap:10,marginTop:20,cursor:"pointer",textAlign:"left"}}>
               <input type="checkbox" checked={ageTick} onChange={e=>setAgeTick(e.target.checked)} style={{width:20,height:20,accentColor:C.gold,flexShrink:0}}/>
               <span className="mono" style={{fontSize:F.sm,color:C.ink}}>{L("Мне есть 18 лет","I'm 18 or older")}</span>
             </label>
-            <button onClick={confirmAge} disabled={!ageTick} className="unlock-btn" style={{marginTop:18,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:ageTick?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:ageTick?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{L("Войти","Enter")}</span></button>
+            <button onClick={confirmAge} disabled={!ageTick} className="unlock-btn" style={{marginTop:18,width:"100%",height:44,borderRadius:R.pill,border:"none",cursor:ageTick?"pointer":"not-allowed",background:C.gold,color:C.goldInk,fontWeight:700,opacity:ageTick?1:0.45}}><span className="mono" style={{fontSize:F.sm}}>{L("Продолжить","Continue")}</span></button>
           </div>
         </div>
       )}
